@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Secrets / credentials — NEVER commit
+.env
+secrets/
+*.token
+client_secret*.json
+token.json
+oauth_token*.json
+
+# Per-video working dirs & caches (large, regenerable)
+jobs/
+.cache/
+http_cache/
+media_cache/
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
