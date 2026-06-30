@@ -1,0 +1,20 @@
+cost_tier: free
+llm:
+  provider: gemini          # gemini | fake | claude
+  gemini_model: gemini-2.0-flash
+  script_provider: gemini
+tts:
+  voice: zh-CN-YunyangNeural
+  rate: "-8%"
+video:
+  resolution: 1080p
+  fps: 30
+guardrails:
+  min_documented_facts: 3
+  allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
+publish:
+  visibility: private       # private | unlisted | public（默认 private = 护栏#3）
+  auto_upload: false
+paths:
+  jobs_root: jobs
+  seeds: seeds/cases.yaml
