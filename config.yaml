@@ -13,8 +13,8 @@ guardrails:
   min_documented_facts: 3
   allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
 publish:
-  visibility: private       # private | unlisted | public（默认 private = 护栏#3）
-  auto_upload: false
+  auto_upload: true         # 全自动上传 YouTube（用户要求）
+  visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
 paths:
   jobs_root: jobs
   seeds: seeds/cases.yaml

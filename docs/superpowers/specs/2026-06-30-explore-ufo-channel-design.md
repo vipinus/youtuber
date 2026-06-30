@@ -176,8 +176,7 @@ youtuber/
 
 1. **事实核查关 (②)**：每个说法标证据等级；证据过弱的选题自动 `blocked`，避免产出伪科学/阴谋论被限流。
 2. **素材合法性锁 (⑥)**：素材来源**白名单制**，逐个校验 license 仅收 PD/CC 并记录归属；非白名单源一律拒绝。
-3. **发布暂停开关 (⑨)**：默认上传为 `private`。频道早期人工过一眼标题/封面/事实，跑顺后再在 config 改 `public` 或开自动。
-   规避 YouTube 对「批量自动上传低质内容」的 spam 政策。
+3. **自动上传 + 可见性闸门 (⑨)**：用户要求**全自动上传**，故 `auto_upload: true`（管线跑完自动调 YouTube Data API 上传，无需手动）。但 `visibility` 默认 `private` 作为**冷启动安全档** —— 自动传成私享草稿，人工过一眼标题/封面/事实后在 Studio 一键公开，或把 config 改 `public` 即全自动公开。理由：规避 YouTube 对「批量自动上传 + 直接公开低质内容」的 spam 政策。两者都可配置。
 
 护栏严格度在 `config.yaml` 可调（如 `guardrails.min_documented_facts: 3`）。
 
@@ -217,8 +216,8 @@ guardrails:
   min_documented_facts: 3       # 低于则 block 选题
   allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
 publish:
-  visibility: private           # private | unlisted | public  (默认 private = 护栏#3)
-  auto_upload: false
+  auto_upload: true             # 全自动上传 YouTube（用户要求）
+  visibility: private           # private | unlisted | public —— 冷启动安全档，过一眼后改 public 即全自动公开（护栏#3）
 ```
 密钥走 `.env` / `secrets/`（不进 git）。
 
@@ -246,7 +245,7 @@ publish:
 
 - LLM 免费档 = **Gemini 免费额度**（用户确认「先全免费跑通」，0 成本验证整条管线）。脚本质量是第一升级位 → **Claude API**（`claude-opus-4-8`≈¥0.7/集 或 `claude-sonnet-4-6`≈¥0.5/集，一天一集约 ¥15–25/月）。注意区分：**Claude Code 交互式 = 半自动**（你在场）；**全自动需走 Anthropic SDK 程序化调用**，并可挂 `web_search` 让脚本联网、带来源，直接服务护栏#1。`llm.py` 的 provider 抽象已为此预留（gemini ↔ claude 仅改 config）。
 - 选题来源 = 我先建一个**种子案例库** `seeds/cases.yaml`（罗斯威尔1947 / 凤凰城之光1997 / Nimitz Tic-Tac 2004 / 通古斯1908 / 兰德申森林1980 / Travis Walton 1975 / 比利时UFO波1989 / Kenneth Arnold 1947 …），LLM 在其上扩展；自动发现选题列为后续。
-- 发布默认 `private`，`auto_upload: false`。
+- 发布默认 `auto_upload: true`（全自动上传 YouTube），`visibility: private`（冷启动安全档，过一眼后改 `public` 即全自动公开）。
 
 ---
 
