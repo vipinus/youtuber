@@ -45,7 +45,8 @@ def build_cmd(job: Path, segments: list[dict], media_files: dict[int, str], subs
         path = job / "media" / name
         dur = seg["dur_sec"]
         if Path(name).suffix.lower() in VIDEO_EXTS:
-            # -stream_loop -1 循环片段，-t 截到刚好 dur 秒（短则循环补足，长则截断）
+            # -stream_loop -1 循环片段，-t 截到刚好 dur 秒（短则循环补足，长则截断）。
+            # 注意：帧精确依赖后面 filter 链的重编码(fps/setpts)；-c copy 会按关键帧对齐、不精确。
             cmd += ["-stream_loop", "-1", "-t", f"{dur}", "-i", str(path)]
         else:
             cmd += ["-loop", "1", "-t", f"{dur}", "-i", str(path)]
