@@ -7,6 +7,7 @@ import yaml
 
 from src.context import Ctx
 from src.util.jobs import write_json
+from src.util.llmjson import extract_json
 
 OUTPUT = "topic.json"
 
@@ -22,13 +23,6 @@ def load_seed(slug: str, seeds_path: str | Path) -> dict:
         if c.get("slug") == slug:
             return c
     raise KeyError(f"种子案例未找到: {slug}（in {seeds_path}）")
-
-
-def extract_json(text: str) -> dict:
-    start, end = text.find("{"), text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError(f"LLM 输出里没有 JSON 对象: {text[:200]!r}")
-    return json.loads(text[start : end + 1])
 
 
 def build_prompt(seed: dict) -> str:

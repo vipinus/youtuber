@@ -6,6 +6,7 @@ from typing import Callable
 
 from src.config import Config, load_config
 from src.context import Ctx
+from src.errors import StageBlocked
 from src.llm import LLMProvider, get_llm
 from src.stages import s1_topic
 from src.util.jobs import exists
@@ -33,8 +34,14 @@ def run_pipeline(
             print(f"[skip] {name} ({output} 已存在)")
             continue
         print(f"[run ] {name}")
-        fn(ctx)
+        try:
+            fn(ctx)
+        except StageBlocked as e:
+            print(f"[blocked] {name}: {e}")
+            break
         print(f"[done] {name} -> {output}")
+    if ctx.warnings:
+        print(f"[warnings] 本次共 {len(ctx.warnings)} 条")
 
 
 def main(argv: list[str] | None = None) -> None:

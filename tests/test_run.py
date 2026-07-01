@@ -3,6 +3,7 @@ from src.config import Config
 from src.llm import FakeLLM
 from src.context import Ctx
 from src.util.jobs import write_json
+from src.errors import StageBlocked
 import src.run as run_mod
 
 
@@ -40,3 +41,22 @@ def test_run_pipeline_from_to_subrange(tmp_path, monkeypatch):
     ])
     run_mod.run_pipeline("s", Config({}), tmp_path, FakeLLM(), frm="b", to="b")
     assert log == ["b"]
+
+
+def test_run_pipeline_stops_on_blocked(tmp_path, monkeypatch):
+    ran = []
+
+    def blocker(ctx):
+        ran.append("a")
+        raise StageBlocked("nope")
+
+    def after(ctx):
+        ran.append("b")
+        write_json(ctx.job, "b.json", {})
+
+    monkeypatch.setattr(run_mod, "STAGES", [
+        ("a", blocker, "a.json"),
+        ("b", after, "b.json"),
+    ])
+    run_mod.run_pipeline("s", Config({}), tmp_path, FakeLLM())
+    assert ran == ["a"]                       # b 未运行（被 blocked 停下）
