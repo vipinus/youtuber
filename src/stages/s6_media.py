@@ -11,6 +11,13 @@ INPUT = "script.json"
 DEFAULT_ALLOWED = ["public-domain", "cc0", "cc-by", "cc-by-sa"]
 
 
+def _terms(query: str) -> list[str]:
+    """把 visual_query 拆成多个候选检索词——LLM 常给逗号拼接的复合串，
+    整串搜图库 0 命中，拆成单个短词逐个试命中率高得多。"""
+    parts = [t.strip() for t in query.split(",") if t.strip()]
+    return parts or ([query.strip()] if query.strip() else [])
+
+
 def _fallback(ctx: Ctx, media_dir: Path, name: str, sid: int, reason: str) -> dict:
     ctx.warn(f"{ctx.slug} seg {sid}: {reason}，用兜底 PD 图")
     fb = Path(ctx.config.get("paths.fallback_image", "assets/fallback.jpg"))
@@ -31,12 +38,16 @@ def run(ctx: Ctx) -> None:
         sid = int(seg.get("id", 0))
         name = f"seg_{sid:03d}.jpg"
         try:
-            cands = [c for c in source.search(seg.get("visual_query", ""))
-                     if c.get("license") in allowed]              # 护栏#2: license 门
-            if not cands:
+            c = None
+            for term in _terms(seg.get("visual_query", "")):
+                cands = [x for x in source.search(term)
+                         if x.get("license") in allowed]          # 护栏#2: license 门
+                if cands:
+                    c = cands[sid % len(cands)]                   # 同词不同段轮选，避免整片同图
+                    break
+            if c is None:
                 items.append(_fallback(ctx, media_dir, name, sid, "无合法素材"))
                 continue
-            c = cands[0]
             source.fetch(c, media_dir / name)
             items.append({"id": sid, "file": name, "source": c["source"],
                           "license": c["license"], "attribution": c["attribution"]})

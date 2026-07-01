@@ -84,3 +84,35 @@ def test_run_picks_first_allowed_over_disallowed(tmp_path, monkeypatch):
     credits = read_json(ctx.job, s6.OUTPUT)
     assert credits["items"][0]["source"] == "ok"       # 跳过非法、选首个合法(cc-by)
     assert credits["items"][0]["license"] == "cc-by"
+
+
+def test_run_splits_compound_query_into_terms(tmp_path, monkeypatch):
+    """visual_query 是逗号复合串时，整串搜不到、拆成子词能命中(首集实跑的坑)。"""
+    import src.stages.s6_media as s6
+
+    class OnlyExactTerm:
+        def search(self, q, limit=5):
+            if q == "weather balloon":                 # 只有这个精确子词有货
+                return [{"license": "public-domain", "source": "nasa",
+                         "attribution": "NASA / balloon", "manifest": "m", "ext": "jpg"}]
+            return []
+        def fetch(self, c, dest):
+            dest.write_bytes(b"\xff\xd8\xff\xe0REAL")   # 假装真图
+
+    cfg = Config({"media": {"provider": "fake"}})
+    ctx = Ctx(slug="c", config=cfg, root=tmp_path, llm=FakeLLM())
+    write_json(ctx.job, s6.INPUT, {"segments": [
+        {"id": 1, "visual_query": "Old headlines 1947, weather balloon, desert New Mexico"},
+    ]})
+    monkeypatch.setattr(s6, "get_media_source", lambda c: OnlyExactTerm())
+    s6.run(ctx)
+    items = read_json(ctx.job, s6.OUTPUT)["items"]
+    assert items[0]["source"] == "nasa"                # 拆词后命中真素材，不再兜底
+    assert (ctx.job / "media" / "seg_001.jpg").read_bytes().startswith(b"\xff\xd8")
+
+
+def test_terms_splits_and_strips():
+    from src.stages.s6_media import _terms
+    assert _terms("a, b ,  c") == ["a", "b", "c"]
+    assert _terms("single") == ["single"]
+    assert _terms("") == []
