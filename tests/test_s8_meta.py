@@ -43,3 +43,13 @@ def test_make_thumbnail_survives_corrupt_bg(tmp_path):
     dest = tmp_path / "thumb.jpg"
     make_thumbnail(dest, "罗斯威尔之谜", bad)          # 不应抛 UnidentifiedImageError
     assert dest.exists() and Image.open(dest).size == (1280, 720)
+
+
+def test_make_thumbnail_survives_missing_font(tmp_path, monkeypatch):
+    """字体文件缺失(换机器)时用兜底字体渲染，不崩 OSError。"""
+    import src.stages.s8_meta as s8
+    from PIL import Image
+    monkeypatch.setattr(s8, "TITLE_FONT", "/nonexistent/font.ttc")
+    dest = tmp_path / "thumb.jpg"
+    s8.make_thumbnail(dest, "罗斯威尔之谜", tmp_path / "nope.jpg")   # 字体+底图都缺
+    assert dest.exists() and Image.open(dest).size == (1280, 720)

@@ -31,6 +31,7 @@ def load_creds(token: str, client_secret: str, scopes=SCOPES):
     creds = Credentials.from_authorized_user_file(token, scopes)
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
+        Path(token).write_text(creds.to_json(), encoding="utf-8")   # 回写刷新后的 token，次日/长期无人值守仍可用
     return creds
 
 

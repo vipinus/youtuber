@@ -29,15 +29,25 @@ def build_prompt(script: dict) -> str:
     )
 
 
-def _fit(path: str, text: str, max_w: int, start: int = 90, lo: int = 40) -> ImageFont.FreeTypeFont:
+def _font(path: str, size: int):
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:                                       # 字体缺失(换机器)→兜底默认字体，别崩最后一阶段
+        try:
+            return ImageFont.load_default(size)
+        except TypeError:                                # 老版 Pillow 的 load_default 不吃 size
+            return ImageFont.load_default()
+
+
+def _fit(path: str, text: str, max_w: int, start: int = 90, lo: int = 40):
     probe = ImageDraw.Draw(Image.new("RGB", (8, 8)))
     s = start
     while s > lo:
-        f = ImageFont.truetype(path, s)
+        f = _font(path, s)
         if probe.textbbox((0, 0), text, font=f, stroke_width=3)[2] <= max_w:
             return f
         s -= 3
-    return ImageFont.truetype(path, lo)
+    return _font(path, lo)
 
 
 def make_thumbnail(dest: Path, title: str, bg: Path) -> None:

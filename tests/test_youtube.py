@@ -19,6 +19,37 @@ def test_get_uploader_unknown_raises():
         get_uploader(Config({"youtube": {"provider": "nope"}}))
 
 
+def test_load_creds_persists_refreshed_token(tmp_path, monkeypatch):
+    """过期 token 刷新后必须回写磁盘，否则无人值守次日又得重新授权。"""
+    import src.youtube as yt
+    tokfile = tmp_path / "token.json"
+    tokfile.write_text('{"stale": true}')
+
+    written = {}
+
+    class _Creds:
+        expired = True
+        refresh_token = "rt"
+        def refresh(self, req): self.expired = False
+        def to_json(self): return '{"refreshed": true}'
+
+    class _CredsFactory:
+        @staticmethod
+        def from_authorized_user_file(path, scopes): return _Creds()
+
+    # 拦截 google 惰性 import：注入假的 Credentials / Request
+    import sys, types
+    fake_oauth2 = types.ModuleType("google.oauth2.credentials")
+    fake_oauth2.Credentials = _CredsFactory
+    fake_req = types.ModuleType("google.auth.transport.requests")
+    fake_req.Request = object
+    monkeypatch.setitem(sys.modules, "google.oauth2.credentials", fake_oauth2)
+    monkeypatch.setitem(sys.modules, "google.auth.transport.requests", fake_req)
+
+    yt.load_creds(str(tokfile), "cs.json")
+    assert tokfile.read_text() == '{"refreshed": true}'   # 刷新后的 token 已落盘
+
+
 def test_thumbnail_failure_keeps_video_id(tmp_path):
     """视频 insert 成功后封面 set 抛异常时，仍须返回 videoId（不能丢已上传的视频）。"""
     video = tmp_path / "v.mp4"; video.write_bytes(b"\x00" * 32)
