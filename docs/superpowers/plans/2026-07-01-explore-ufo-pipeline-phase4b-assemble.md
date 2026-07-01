@@ -258,3 +258,13 @@ git commit -m "feat(run): 注册阶段⑦ + e2e 绑定 to=s6_media（防合成�
 - **BGM 闪避 + 片头尾**：加背景音乐（`sidechaincompress` 在旁白下压低）+ intro/outro 拼接。
 - **署名**：P5 s8 用 `credits.json` 的 attribution 写进简介/片尾（满足 CC 署名）。
 - **P5 发布**：s8 元数据/封面 → s9 YouTube 上传（护栏#3，`auto_upload:true`/`visibility:private`，一次性 OAuth）。
+
+### P5 输入 / P4b 质量跟踪（来自 P4b 终审）
+
+1. **【已做】ffmpeg stderr 可诊断**：s7 失败抛 `RuntimeError` 带 ffmpeg stderr（commit adb776c）。
+2. **【已验】中文字幕真渲染**：从真实 mp4 抽帧目视确认 Noto CJK 经 libass 正常烧录（无豆腐块），render 环境已装 Noto Sans CJK。
+3. **【§6⑦ 未完，跟踪】** MVP 是静态铺满；**Ken Burns(zoompan) / BGM 闪避 / 片头尾** 仍待做——§6⑦ 别算「完成」。
+4. **【Minor】音频 concat 仅归一采样率**，未归一声道/格式：混源音频（单声道+立体声）会 concat 失败。加 `aformat=sample_fmts=fltp:channel_layouts=stereo`。
+5. **【Minor】字幕路径转义**在含 `:`/`'` 的路径上脆弱（当前 job slug 简单不触发）；路径变用户可控时补。
+6. **【Minor】s7 无 `n=0` 守卫**（空 segments → `concat=n=0` ffmpeg 拒）；真实恒 ≥1 段，加早返回更清晰。
+7. **P5 s8_meta** 从 job-root 读 `video.mp4` + `credits.json`（attribution 署名）；s9_publish 上传 `video.mp4`。
