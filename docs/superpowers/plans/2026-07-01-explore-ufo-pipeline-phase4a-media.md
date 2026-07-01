@@ -639,3 +639,11 @@ git commit -m "feat(run): 注册阶段⑥ + 六阶段端到端"
 - **素材源扩展**：archive.org / Wikimedia Commons（含 license 解析）作 `MediaSource` 新 provider。
 - **P5 发布**：s8 元数据/封面 → s9 YouTube 上传（护栏#3）。
 - **LLM 升级**：`claude` 分支绕开 Gemini 配额。
+
+### P4b 必处理输入（来自 P4a 终审）
+
+1. **【已解决】兜底图**：`assets/fallback.jpg`（1920×1080 PD 星空，自制）已生成并提交；s6 无匹配段现在写真图，P4b 的 ffmpeg 可直接用。
+2. **【P4b-blocking】credits.json 位置**：实现落在 `jobs/<slug>/credits.json`（与 topic/research/script/timing 等所有阶段产物一致，编排器 skip 也认 job-root）。spec §6⑥/§8 里写的 `media/credits.json` 是示意；**以 job-root 为准**，P4b 的 s8_meta 从 `jobs/<slug>/credits.json` 读。
+3. **【重要】license 真读**：`NASAMedia` 现把所有结果标 `public-domain`（NASA 多数 PD，MVP 可接受）。加 archive.org/Wikimedia provider 前**必须逐个真读 license**（那里假设 PD 危险）。
+4. **【Minor】s6/s4 `sid=int()` 移进 try**：非整数 id 会在 try 外崩（s3 输出未校验）；虽 fail-closed，仍建议把 `sid`/`name` 派生移进 try（或 enumerate 兜底）。
+5. **【Minor】s5 缺 script.json 静默兜底**：加 `ctx.warn`；统一 credits(int-coerce)/timing(原值) 的 id 类型，防 P4b 按 id join 错配。
