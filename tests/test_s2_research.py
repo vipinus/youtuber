@@ -1,6 +1,5 @@
 import json
 import pytest
-from pathlib import Path
 from src.config import Config
 from src.llm import FakeLLM
 from src.context import Ctx
@@ -56,3 +55,12 @@ def test_run_warns_below_threshold(tmp_path):
     assert out["blocked"] is False
     assert ctx.warnings                 # 有 warning
     assert out.get("warnings")          # 产物里也记了
+
+
+def test_run_malformed_facts_fail_closed(tmp_path):
+    ctx = _ctx(tmp_path, json.dumps({"facts": "oops-not-a-list"}))
+    with pytest.raises(StageBlocked):
+        run(ctx)
+    out = read_json(ctx.job, OUTPUT)
+    assert out["blocked"] is True
+    assert out["evidence_summary"] == {"documented": 0, "claim": 0, "speculation": 0}

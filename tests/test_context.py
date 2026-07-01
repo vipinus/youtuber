@@ -9,8 +9,6 @@ def test_ctx_job_path(tmp_path):
 
 
 def test_ctx_warn_collects(tmp_path):
-    from src.config import Config
-    from src.llm import FakeLLM
     ctx = Ctx(slug="x", config=Config({}), root=tmp_path, llm=FakeLLM())
     assert ctx.warnings == []
     ctx.warn("something")

@@ -1,8 +1,9 @@
 from pathlib import Path
+import json
 from src.config import Config
 from src.llm import FakeLLM
 from src.context import Ctx
-from src.util.jobs import write_json
+from src.util.jobs import write_json, read_json
 from src.errors import StageBlocked
 import src.run as run_mod
 
@@ -74,8 +75,6 @@ class SeqLLM:
 
 
 def test_end_to_end_topic_research_script(tmp_path):
-    import json
-    from src.util.jobs import read_json
     topic = json.dumps({"title_working": "罗斯威尔", "year": 1947})
     research = json.dumps({"facts": [
         {"claim": "军方新闻稿", "evidence": "documented", "source": "存档"},

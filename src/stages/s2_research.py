@@ -40,6 +40,9 @@ def run(ctx: Ctx) -> None:
     topic = read_json(ctx.job, INPUT)
     research = extract_json(ctx.llm.generate(SYSTEM, build_prompt(topic)))
     facts = research.get("facts", [])
+    if not isinstance(facts, list):        # 畸形 LLM 输出 → 视为空 → fail closed
+        facts = []
+    research["facts"] = facts
     summary = summarize(facts)
     research["evidence_summary"] = summary
     documented = summary["documented"]
@@ -48,9 +51,11 @@ def run(ctx: Ctx) -> None:
     research["blocked"] = blocked
     if not blocked and documented < min_doc:
         ctx.warn(f"{ctx.slug}: documented 事实 {documented} 条 < 阈值 {min_doc}")
-        research.setdefault("warnings", []).append(
-            f"documented={documented} < {min_doc}"
-        )
+        warns = research.get("warnings")
+        if not isinstance(warns, list):
+            warns = []
+            research["warnings"] = warns
+        warns.append(f"documented={documented} < {min_doc}")
     write_json(ctx.job, OUTPUT, research)
     if blocked:
         raise StageBlocked(f"{ctx.slug}: 无 documented 事实，证据不足，停止本案例")
