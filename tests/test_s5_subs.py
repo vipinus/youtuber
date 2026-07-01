@@ -74,3 +74,46 @@ def test_run_uses_script_text_with_punctuation(tmp_path):
     run(ctx)
     txt = (ctx.job / OUTPUT).read_text(encoding="utf-8")
     assert "，" in txt and "。" in txt        # 标点从 script 原文保留
+
+
+def test_split_cues_full_sentences_and_trailing_punct():
+    """句末标点各成一条完整句；标点留句尾，不以标点开头(用户反馈:标点不分两段/整句表达)。"""
+    from src.stages.s5_subs import _split_cues
+    text = "然而，军方很快改口。这到底是飞碟，还是气球？"
+    cues = _split_cues(text, max_chars=16)
+    assert cues == ["然而，军方很快改口。", "这到底是飞碟，还是气球？"]
+    assert "".join(cues) == text                       # 不丢字不加字
+    for c in cues:
+        assert c[0] not in "，。！？、；："              # 不以标点开头
+        assert c[-1] in "。！？"                         # 整句以句末标点收尾
+
+
+def test_split_cues_long_clause_breaks_at_comma_not_midword():
+    """超长句在逗号处断、逗号留前句尾；不在词中间硬切(用户反馈:完整的词不分两句)。"""
+    from src.stages.s5_subs import _split_cues
+    text = "为什么军方最初会如此肯定地宣布发现了飞碟，随后却又改口。"
+    cues = _split_cues(text, max_chars=16)
+    assert len(cues) == 2
+    assert cues[0].endswith("，")                        # 断在逗号，标点跟前句
+    assert cues[1] == "随后却又改口。"
+    assert "".join(cues) == text
+    assert all(c[0] not in "，。！？、；：" for c in cues)
+
+
+def test_split_cues_short_fragment_joins_next():
+    """短引导词(然而，)不单独成条，并入后句避免碎片。"""
+    from src.stages.s5_subs import _split_cues
+    cues = _split_cues("然而，事情并不简单。", max_chars=16)
+    assert cues == ["然而，事情并不简单。"]
+
+
+def test_seg_lines_one_cue_maps_full_span():
+    from src.stages.s5_subs import seg_lines
+    words = [{"text": "军方", "start_sec": 0.0, "dur_sec": 0.5},
+             {"text": "宣布", "start_sec": 0.5, "dur_sec": 0.5},
+             {"text": "发现", "start_sec": 1.0, "dur_sec": 0.5},
+             {"text": "飞碟", "start_sec": 1.5, "dur_sec": 0.5}]
+    lines = seg_lines("军方宣布发现飞碟。", words, max_chars=16)
+    assert len(lines) == 1
+    assert lines[0][2] == "军方宣布发现飞碟。"
+    assert lines[0][0] == 0.0 and round(lines[0][1], 1) == 2.0

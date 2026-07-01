@@ -5,7 +5,9 @@ from src.util.jobs import read_json
 
 OUTPUT = "subs.ass"
 INPUT = "timing.json"
-SENT_PUNCT = "。！？，、；"
+SENT_PUNCT = "。！？，、；"          # build_lines(legacy) 用
+SENT_END = "。！？!?…"              # 句末标点：必断，一句一条字幕
+SOFT_PUNCT = "，、；：,;:"           # 次级标点：句子够长时才在此断，标点留句尾
 
 _ASS_HEAD = """[Script Info]
 ScriptType: v4.00+
@@ -59,30 +61,52 @@ def render_ass(lines: list[tuple[float, float, str]]) -> str:
     return _ASS_HEAD.format(font=font, size=size) + body
 
 
+def _split_cues(text: str, max_chars: int) -> list[str]:
+    """把整段文字切成字幕句，规则(修复用户反馈)：
+    - 句末标点 。！？ 必断 → 尽量一句表达完整；
+    - 次级标点 ，、；：只在句子已够长(≥soft)时才断，且标点始终留在句尾，
+      不甩到下一条开头(修复"标点分到两段");
+    - 只有一长串完全无标点时，才在 hard 上限做最后手段的硬切(尽量不拦腰断词)。"""
+    soft = max(int(max_chars * 0.55), 6)
+    hard = max_chars + 8
+    cues: list[str] = []
+    buf = ""
+    for ch in text:
+        buf += ch
+        if ch in SENT_END:
+            cues.append(buf)
+            buf = ""
+        elif ch in SOFT_PUNCT and len(buf) >= soft:
+            cues.append(buf)
+            buf = ""
+        elif len(buf) >= hard:
+            cues.append(buf)
+            buf = ""
+    if buf.strip():
+        cues.append(buf)
+    return [c for c in cues if c.strip()]
+
+
 def seg_lines(text: str, words: list[dict], max_chars: int) -> list[tuple[float, float, str]]:
-    lines = []
-    if not words:
-        return lines
+    if not words or not text.strip():
+        return []
     start = words[0]["start_sec"]
     end = words[-1]["start_sec"] + words[-1]["dur_sec"]
     span = max(end - start, 0.001)
     n = len(text)
-    buf = ""
-    line_start_i = 0
-    for i, ch in enumerate(text):
-        buf += ch
-        if len(buf) >= max_chars or ch in SENT_PUNCT or i == n - 1:
-            s = start + span * (line_start_i / n)
-            e = start + span * ((i + 1) / n)
-            lines.append((round(s, 3), round(e, 3), buf))
-            buf = ""
-            line_start_i = i + 1
+    lines: list[tuple[float, float, str]] = []
+    pos = 0
+    for cue in _split_cues(text, max_chars):        # 按句/标点整块切，时间按字符位置比例映射到词时间轴
+        s = start + span * (pos / n)
+        pos += len(cue)
+        e = start + span * (pos / n)
+        lines.append((round(s, 3), round(e, 3), cue))
     return lines
 
 
 def run(ctx: Ctx) -> None:
     timing = read_json(ctx.job, INPUT)
-    max_chars = ctx.config.get("subs.max_chars", 16)
+    max_chars = ctx.config.get("subs.max_chars", 20)
 
     # 如果 script.json 存在，用新的 seg_lines 方法保留标点；否则用旧的 build_lines 方法
     script_path = ctx.job / "script.json"
