@@ -42,3 +42,43 @@ def test_run_fallback_on_fetch_error(tmp_path, monkeypatch):
     credits = read_json(ctx.job, s6.OUTPUT)
     assert credits["items"][0]["source"] == "fallback"     # fetch 崩了也兜底，不炸
     assert (ctx.job / "media" / "seg_001.jpg").exists()
+
+
+def test_run_rejects_disallowed_license(tmp_path, monkeypatch):
+    import src.stages.s6_media as s6
+
+    class DenySource:
+        def search(self, q, limit=5):
+            return [{"license": "all-rights-reserved", "source": "deny",
+                     "attribution": "x", "manifest": "m", "ext": "jpg"}]
+        def fetch(self, c, dest):
+            dest.write_bytes(b"SHOULD_NOT_HAPPEN")
+
+    monkeypatch.setattr(s6, "get_media_source", lambda cfg: DenySource())
+    ctx = _ctx(tmp_path)
+    s6.run(ctx)
+    credits = read_json(ctx.job, s6.OUTPUT)
+    assert all(item["source"] == "fallback" for item in credits["items"])   # 非法license被拒→兜底
+    assert (ctx.job / "media" / "seg_001.jpg").read_bytes() != b"SHOULD_NOT_HAPPEN"  # 没fetch非法源
+
+
+def test_run_picks_first_allowed_over_disallowed(tmp_path, monkeypatch):
+    import src.stages.s6_media as s6
+
+    class MixSource:
+        def search(self, q, limit=5):
+            return [
+                {"license": "all-rights-reserved", "source": "deny", "attribution": "x",
+                 "manifest": "m", "ext": "jpg"},
+                {"license": "cc-by", "source": "ok", "attribution": "y",
+                 "manifest": "m2", "ext": "jpg"},
+            ]
+        def fetch(self, c, dest):
+            dest.write_bytes(b"OKIMG")
+
+    monkeypatch.setattr(s6, "get_media_source", lambda cfg: MixSource())
+    ctx = _ctx(tmp_path)
+    s6.run(ctx)
+    credits = read_json(ctx.job, s6.OUTPUT)
+    assert credits["items"][0]["source"] == "ok"       # 跳过非法、选首个合法(cc-by)
+    assert credits["items"][0]["license"] == "cc-by"
