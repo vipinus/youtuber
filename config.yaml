@@ -7,6 +7,8 @@ tts:
   provider: edge            # edge | fake
   voice: zh-CN-YunyangNeural
   rate: "-8%"
+media:
+  provider: nasa            # nasa | fake
 video:
   resolution: 1080p
   fps: 30
@@ -19,3 +21,4 @@ publish:
 paths:
   jobs_root: jobs
   seeds: seeds/cases.yaml
+  fallback_image: assets/fallback.jpg
