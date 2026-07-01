@@ -15,6 +15,8 @@ def test_load_env_no_override(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text('A=1\n# c\nB="two"\nC=keep\n', encoding="utf-8")
     monkeypatch.setenv("C", "already")
+    monkeypatch.delenv("A", raising=False)
+    monkeypatch.delenv("B", raising=False)
     load_env(env)
     assert os.environ["A"] == "1"
     assert os.environ["B"] == "two"
