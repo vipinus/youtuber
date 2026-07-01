@@ -171,10 +171,12 @@ class ArchiveVideo:
         # 没有 mp4 才退到 ogv/m4v。
         mp4s = [f for f in videos if str(f.get("name", "")).lower().endswith(".mp4")]
         pick_from = mp4s or videos
-        # 过滤掉可疑的极小占位/损坏文件；若全体都可疑（唯一选项），退回全体而非报错。
+        # 过滤掉可疑的极小占位/损坏文件。有达标的→选最小达标(省带宽，只截几秒)；
+        # 若全体都低于阈值(无达标)→选最大的，最不像占位/损坏文件(不能再 min 选到 12KB 垃圾)。
         plausible = [f for f in pick_from if size_of(f) >= self._MIN_PLAUSIBLE_VIDEO_BYTES]
-        pick_from = plausible or pick_from
-        return min(pick_from, key=size_of)
+        if plausible:
+            return min(plausible, key=size_of)
+        return max(pick_from, key=size_of)
 
     def fetch(self, candidate: dict, dest: Path) -> None:
         import requests

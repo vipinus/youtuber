@@ -18,7 +18,8 @@ def _terms(query: str) -> list[str]:
     return parts or ([query.strip()] if query.strip() else [])
 
 
-def _fallback(ctx: Ctx, media_dir: Path, name: str, sid: int, reason: str) -> dict:
+def _fallback(ctx: Ctx, media_dir: Path, sid: int, reason: str) -> dict:
+    name = f"seg_{sid:03d}.jpg"                       # 兜底恒为静图
     ctx.warn(f"{ctx.slug} seg {sid}: {reason}，用兜底 PD 图")
     fb = Path(ctx.config.get("paths.fallback_image", "assets/fallback.jpg"))
     (media_dir / name).write_bytes(fb.read_bytes() if fb.exists() else b"")
@@ -36,7 +37,6 @@ def run(ctx: Ctx) -> None:
     items: list[dict] = []
     for seg in script.get("segments", []):
         sid = int(seg.get("id", 0))
-        name = f"seg_{sid:03d}.jpg"
         try:
             c = None
             for term in _terms(seg.get("visual_query", "")):
@@ -46,12 +46,14 @@ def run(ctx: Ctx) -> None:
                     c = cands[sid % len(cands)]                   # 同词不同段轮选，避免整片同图
                     break
             if c is None:
-                items.append(_fallback(ctx, media_dir, name, sid, "无合法素材"))
+                items.append(_fallback(ctx, media_dir, sid, "无合法素材"))
                 continue
+            ext = str(c.get("ext") or "jpg").lstrip(".").lower()  # 视频源 mp4 / 图源 jpg
+            name = f"seg_{sid:03d}.{ext}"
             source.fetch(c, media_dir / name)
             items.append({"id": sid, "file": name, "source": c["source"],
                           "license": c["license"], "attribution": c["attribution"]})
         except Exception as e:  # 网络/畸形素材 → fail-safe 兜底
-            items.append(_fallback(ctx, media_dir, name, sid, f"取素材失败({type(e).__name__})"))
+            items.append(_fallback(ctx, media_dir, sid, f"取素材失败({type(e).__name__})"))
 
     write_json(ctx.job, OUTPUT, {"items": items})

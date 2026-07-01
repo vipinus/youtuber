@@ -116,3 +116,35 @@ def test_terms_splits_and_strips():
     assert _terms("a, b ,  c") == ["a", "b", "c"]
     assert _terms("single") == ["single"]
     assert _terms("") == []
+
+
+def test_run_names_file_by_candidate_ext(tmp_path, monkeypatch):
+    """视频候选(ext=mp4)→ seg_001.mp4；credits 记全名。兜底仍 .jpg。"""
+    import src.stages.s6_media as s6
+
+    class VidSource:
+        def search(self, q, limit=5):
+            return [{"license": "public-domain", "source": "archive",
+                     "attribution": "Internet Archive / x", "manifest": "id1", "ext": "mp4"}]
+        def fetch(self, c, dest):
+            dest.write_bytes(b"\x00\x00\x00\x18ftypmp42")   # 假装 mp4
+
+    cfg = Config({"media": {"provider": "fake"}})
+    ctx = Ctx(slug="c", config=cfg, root=tmp_path, llm=FakeLLM())
+    write_json(ctx.job, s6.INPUT, {"segments": [{"id": 1, "visual_query": "desert"}]})
+    monkeypatch.setattr(s6, "get_media_source", lambda c: VidSource())
+    s6.run(ctx)
+    items = read_json(ctx.job, s6.OUTPUT)["items"]
+    assert items[0]["file"] == "seg_001.mp4"
+    assert (ctx.job / "media" / "seg_001.mp4").exists()
+
+
+def test_pick_file_prefers_largest_when_all_below_floor(monkeypatch):
+    """_pick_file: 全部候选都低于阈值时应选最大(不再 min 选到占位垃圾)。"""
+    from src.media import ArchiveVideo
+    av = ArchiveVideo()
+    files = [
+        {"name": "Download.mp4", "format": "h.264", "size": 12_000},     # 占位垃圾
+        {"name": "real_clip.mp4", "format": "h.264", "size": 150_000},   # 真小clip
+    ]
+    assert av._pick_file(files)["name"] == "real_clip.mp4"
