@@ -81,7 +81,7 @@ def _norm_license(licenseurl: str | None, collection: str | list[str] | None) ->
     顺序很重要：显式 by-nc/by-nd 一律硬拒——即便 collection 命中 PD 白名单也不能
     覆盖（NC 不在允许集合里；ND 禁止我们剪辑改作）。
     """
-    lic = (licenseurl or "").lower()
+    lic = (licenseurl or "").strip().lower()
     if "by-nc" in lic or "by-nd" in lic:
         return None
     if "publicdomain" in lic or "/zero/" in lic:
@@ -90,7 +90,12 @@ def _norm_license(licenseurl: str | None, collection: str | list[str] | None) ->
         return "cc-by-sa"
     if "/licenses/by/" in lic:
         return "cc-by"
+    if lic:
+        # licenseurl 存在但不是已知许可(如 rightsstatements.org/InC = 明确"有版权")
+        # → 一律拒。绝不让 collection 白名单覆盖显式许可声明——这是封号级红线。
+        return None
 
+    # 仅当完全没有 licenseurl 时，才凭 collection 判定(公认全 PD 的集合)
     cols = collection if isinstance(collection, list) else ([collection] if collection else [])
     cols_norm = {str(c).strip().lower() for c in cols if c}
     pd_norm = {c.lower() for c in _ARCHIVE_PD_COLLECTIONS}

@@ -308,3 +308,19 @@ def test_archive_fetch_raises_when_no_video_files(tmp_path, monkeypatch):
         ArchiveVideo().fetch({"manifest": identifier, "ext": "mp4",
                               "license": "public-domain", "attribution": "x", "source": "archive"}, dest)
     assert not dest.exists()
+
+
+def test_norm_license_rejects_explicit_incopyright_even_in_pd_collection():
+    """封号级红线:显式非许可的 licenseurl(如 rightsstatements InC)即便在 PD 集合也必须拒。"""
+    from src.media import _norm_license
+    assert _norm_license("https://rightsstatements.org/vocab/InC/1.0/", "prelinger") is None
+    assert _norm_license("https://rightsstatements.org/vocab/InC/1.0/", "usgovfilms") is None
+    assert _norm_license("http://example.com/some-rights", ["FedFlix"]) is None
+    # by-nd 即便在 PD 集合也拒(禁止改作)
+    assert _norm_license("http://creativecommons.org/licenses/by-nd/4.0/", "prelinger") is None
+    # 无 licenseurl + PD 集合 → 放行(collection 信任路径仅在无显式许可时生效)
+    assert _norm_license(None, "prelinger") == "public-domain"
+    assert _norm_license("", ["usgovfilms"]) == "public-domain"
+    # 显式 PD/CC 正常放行
+    assert _norm_license("http://creativecommons.org/publicdomain/zero/1.0/", None) == "public-domain"
+    assert _norm_license("http://creativecommons.org/licenses/by/4.0/", "mirrortube") == "cc-by"
