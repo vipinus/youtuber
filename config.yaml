@@ -8,7 +8,7 @@ tts:
   voice: zh-CN-YunyangNeural
   rate: "-18%"              # 语速放慢(悬疑解说更沉稳；原 -8% 偏快)
 media:
-  provider: nasa            # nasa | fake
+  provider: archive         # archive(archive.org PD影片,动态贴题) | nasa(静图) | fake
 subs:
   max_chars: 20            # 字幕单条软上限：句末标点必断、次级标点够长才断、不拦腰断词
 youtube:
