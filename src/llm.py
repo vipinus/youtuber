@@ -23,20 +23,23 @@ class FakeLLM:
 
 
 class GeminiLLM:
-    """Gemini 免费额度。惰性 import，使测试无需安装 SDK。"""
+    """Gemini（google-genai）。惰性 import，使单测无需 SDK / 网络。"""
 
-    def __init__(self, api_key: str, model: str = "gemini-2.0-flash"):
-        import google.generativeai as genai
+    def __init__(self, api_key: str, model: str = "gemini-2.5-flash"):
+        from google import genai
 
-        genai.configure(api_key=api_key)
-        self._genai = genai
-        self._model_name = model
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
 
     def generate(self, system: str, prompt: str) -> str:
-        model = self._genai.GenerativeModel(
-            self._model_name, system_instruction=system
+        from google.genai import types
+
+        resp = self._client.models.generate_content(
+            model=self._model,
+            contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=system),
         )
-        return model.generate_content(prompt).text
+        return resp.text or ""
 
 
 def get_llm(config: Config) -> LLMProvider:
@@ -47,7 +50,7 @@ def get_llm(config: Config) -> LLMProvider:
         key = os.environ.get("GEMINI_API_KEY", "")
         if not key:
             raise RuntimeError("GEMINI_API_KEY 未设置（写进 .env 或环境变量）")
-        return GeminiLLM(key, config.get("llm.gemini_model", "gemini-2.0-flash"))
+        return GeminiLLM(key, config.get("llm.gemini_model", "gemini-2.5-flash"))
     if provider == "claude":
         raise NotImplementedError("claude provider 在后续『LLM 升级』阶段实现")
     raise ValueError(f"未知 llm provider: {provider}")
