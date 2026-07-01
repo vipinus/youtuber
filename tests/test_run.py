@@ -102,9 +102,27 @@ def test_e2e_through_subtitles(tmp_path):
     script = json.dumps({"title_options": ["t"], "segments": [
         {"id": 1, "text": "飞碟来了。", "visual_query": "q", "est_sec": 3},
     ]})
-    cfg = Config({"tts": {"provider": "fake"}})
+    cfg = Config({"tts": {"provider": "fake"}, "media": {"provider": "fake"}})
     run_mod.run_pipeline("roswell-1947", cfg, tmp_path, SeqLLM([topic, research, script]))
     job = tmp_path / "roswell-1947"
     assert read_json(job, "timing.json")["segments"][0]["words"][0]["text"] == "飞"
     assert "Dialogue:" in (job / "subs.ass").read_text(encoding="utf-8")
     assert (job / "audio" / "seg_001.mp3").exists()
+
+
+def test_e2e_through_media(tmp_path):
+    topic = json.dumps({"title_working": "罗斯威尔", "year": 1947})
+    research = json.dumps({"facts": [
+        {"claim": "a", "evidence": "documented", "source": "s"},
+        {"claim": "b", "evidence": "documented", "source": "s"},
+        {"claim": "c", "evidence": "documented", "source": "s"},
+    ]})
+    script = json.dumps({"title_options": ["t"], "segments": [
+        {"id": 1, "text": "飞碟来了。", "visual_query": "roswell", "est_sec": 3},
+    ]})
+    cfg = Config({"tts": {"provider": "fake"}, "media": {"provider": "fake"}})
+    run_mod.run_pipeline("roswell-1947", cfg, tmp_path, SeqLLM([topic, research, script]))
+    job = tmp_path / "roswell-1947"
+    assert read_json(job, "credits.json")["items"][0]["license"] == "public-domain"
+    assert (job / "media" / "seg_001.jpg").exists()
+    assert (job / "subs.ass").read_text(encoding="utf-8").count("Dialogue:") >= 1
