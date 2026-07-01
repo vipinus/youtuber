@@ -117,3 +117,12 @@ def test_seg_lines_one_cue_maps_full_span():
     assert len(lines) == 1
     assert lines[0][2] == "军方宣布发现飞碟。"
     assert lines[0][0] == 0.0 and round(lines[0][1], 1) == 2.0
+
+
+def test_split_cues_no_leading_punct_after_hardbreak():
+    """无标点长串硬切后，紧随的逗号不能落到下一条开头(用户反馈的实际漏网case)。"""
+    from src.stages.s5_subs import _split_cues
+    text = "1947年7月8日，美国新墨西哥州的罗斯威尔陆军航空基地，向全世界投下了一枚重磅炸弹："
+    cues = _split_cues(text, max_chars=20)
+    assert all(c[0] not in "，。！？、；：：" for c in cues)   # 无一以标点开头
+    assert "".join(cues) == text                            # 不丢字

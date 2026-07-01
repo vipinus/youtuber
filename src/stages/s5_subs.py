@@ -84,7 +84,20 @@ def _split_cues(text: str, max_chars: int) -> list[str]:
             buf = ""
     if buf.strip():
         cues.append(buf)
-    return [c for c in cues if c.strip()]
+    cues = [c for c in cues if c.strip()]
+    # 归一化：任何一条都不以标点开头——把行首标点并回上一条句尾。
+    # (无标点长串硬切后，紧随的逗号会落到下一条开头，正是"标点分到两段")
+    fixed: list[str] = []
+    for c in cues:
+        lead = 0
+        while lead < len(c) and c[lead] in (SENT_END + SOFT_PUNCT):
+            lead += 1
+        if lead and fixed:
+            fixed[-1] += c[:lead]
+            c = c[lead:]
+        if c:
+            fixed.append(c)
+    return fixed
 
 
 def seg_lines(text: str, words: list[dict], max_chars: int) -> list[tuple[float, float, str]]:
