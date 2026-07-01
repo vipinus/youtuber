@@ -888,3 +888,13 @@ Expected: 打印 `[run ] s1_topic` 重新生成。
 - **P4 成片**：`s6_media`（护栏#2 白名单源 NASA/archive.org/Wikimedia + license 校验 + Ken Burns）→ `s7_assemble`（ffmpeg：画面+配音+字幕+BGM 闪避+片头尾）。产物 `video.mp4`。
 - **P5 发布**：`s8_meta`（LLM 写标题/简介/标签 + Pillow 封面）→ `s9_publish`（护栏#3 YouTube Data API，默认 private）。
 - **LLM 升级（随时可插）**：实现 `llm.py` 的 `claude` 分支（Anthropic SDK，`claude-opus-4-8`/`claude-sonnet-4-6`，可挂 `web_search`），把脚本/调研切到 Claude。
+
+### P2 设计输入（来自 P1 终审，写 P2 计划时必须处理）
+
+1. **编排器契约要扩展** —— 当前 `run(ctx) -> None` 表达不了三件 P2 需要的事：
+   - **控制流 / `blocked`（护栏#1，spec §7/§10）**：s2 若判定证据过弱写 `research.json.blocked=true`，`-> None` 阶段无法让 `run_pipeline` 停止或自动跳到下一个种子。定个机制（如抛 `Blocked` 异常，或 `run_pipeline` 每阶段后检查 sentinel 字段）。
+   - **多产物 checkpoint**：s4（`audio/`+`timing.json`）、s6（`media/`+`credits.json`）产出多个文件，而跳过逻辑只认单个 `OUTPUT`。明确「主产物=checkpoint」约定，避免半写的多文件阶段被误跳。
+   - **非致命 warnings 通道（spec §10）**：阶段需要能记录 warning 而不中断（`ctx` 级收集器或 per-artifact `warnings` 字段）。
+2. **加 `.env.example`**（`GEMINI_API_KEY=`）——可安全提交，替代「手动建 .env」步骤。
+3. **Gemini SDK 选型**：现用 legacy `google-generativeai`；Google 现行 SDK 是 `google-genai`。在 ②③⑧ 大量依赖前，明确锁定版本或迁移。
+4. **依赖锁定**：`requirements.txt` 目前全 `>=` 无 lockfile；考虑 pin 以保证可复现。
