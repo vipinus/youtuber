@@ -4,6 +4,7 @@ llm:
   gemini_model: gemini-2.5-flash
   script_provider: gemini
 tts:
+  provider: edge            # edge | fake
   voice: zh-CN-YunyangNeural
   rate: "-8%"
 video:
