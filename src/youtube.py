@@ -24,6 +24,10 @@ def load_creds(token: str, client_secret: str, scopes=SCOPES):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
+    if not Path(token).exists():
+        raise FileNotFoundError(
+            f"未找到 YouTube 授权文件 {token}；请先跑一次性授权："
+            f"python -m src.auth_youtube（详见 docs/youtube-oauth-setup.md）")
     creds = Credentials.from_authorized_user_file(token, scopes)
     if creds and creds.expired and creds.refresh_token:
         creds.refresh(Request())
@@ -52,10 +56,16 @@ class YouTubeUploader:
             media_body=MediaFileUpload(str(video), resumable=True))
         resp = req.execute()
         vid = resp["id"]
+        result = {"videoId": vid, "url": f"https://youtu.be/{vid}", "status": visibility}
+        # 视频已上传成功；封面失败（如频道未手机验证→403）不能吞掉已成功的 videoId，
+        # 否则阶段⑨ 写不出 publish.json，就丢失了这条已经存在于 YouTube 的视频。
         if thumb and Path(thumb).exists():
-            self._yt.thumbnails().set(
-                videoId=vid, media_body=MediaFileUpload(str(thumb))).execute()
-        return {"videoId": vid, "url": f"https://youtu.be/{vid}", "status": visibility}
+            try:
+                self._yt.thumbnails().set(
+                    videoId=vid, media_body=MediaFileUpload(str(thumb))).execute()
+            except Exception as e:  # noqa: BLE001 — 封面失败不应作废整次上传
+                result["thumbnail_error"] = str(e)
+        return result
 
 
 def get_uploader(config: Config) -> Uploader:
