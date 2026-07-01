@@ -355,3 +355,23 @@ def test_search_drops_blocked_even_if_pd(monkeypatch):
     out = media.ArchiveVideo().search("roswell", limit=5)
     ids = [c["manifest"] for c in out]
     assert "death_mills" not in ids and "roswell6" in ids
+
+
+def test_search_restricts_to_trusted_collections(monkeypatch):
+    """检索必须限定在可信 PD 集合(避免开放搜索捞到 mis-tag 的 GTA/游戏/垃圾)。"""
+    import src.media as media
+    captured = {}
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self): return {"response": {"docs": []}}
+
+    def _fake_get(url, params=None, **k):
+        captured["q"] = (params or {}).get("q", "")
+        return _Resp()
+
+    monkeypatch.setattr("requests.get", _fake_get)
+    media.ArchiveVideo().search("flying saucer", limit=3)
+    assert "collection:(" in captured["q"]                 # 限定集合
+    assert "prelinger" in captured["q"] and "FedFlix" in captured["q"]
+    assert "mediatype:movies" in captured["q"]

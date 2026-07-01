@@ -72,6 +72,14 @@ _ARCHIVE_PD_COLLECTIONS = {
     "nasa", "publicmovies", "openbeelden",
 }
 
+# 检索时只在这些机构策展的可信 PD 集合里搜——开放全文搜索会捞到用户上传的
+# mis-tag 内容(实测:被标 PD 的 GTA 游戏录屏=Rockstar 版权雷)和跑题垃圾(游戏BGM/随机讲座)。
+# 限定集合同时提升合法性与贴题度(政府新闻片/档案片对历史题材本就相关)。
+_ARCHIVE_SEARCH_COLLECTIONS = (
+    "prelinger", "FedFlix", "usgovfilms", "us-national-archives",
+    "nasa", "publicmovies", "openbeelden",
+)
+
 
 def _norm_license(licenseurl: str | None, collection: str | list[str] | None) -> str | None:
     """archive.org 素材护栏#2：把 licenseurl/collection 归一成 s6 白名单 token
@@ -140,8 +148,9 @@ class ArchiveVideo:
         import requests
 
         rows = max(limit * 4, limit)          # 过量取，扛得住过滤掉的坏结果
+        cols = " OR ".join(_ARCHIVE_SEARCH_COLLECTIONS)
         params = {
-            "q": f"({query}) AND mediatype:movies",
+            "q": f"({query}) AND mediatype:movies AND collection:({cols})",
             "fl[]": ["identifier", "title", "licenseurl", "collection", "subject", "description"],
             "rows": rows,
             "output": "json",
