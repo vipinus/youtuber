@@ -1,0 +1,28 @@
+- slug: roswell-1947
+  title_working: 罗斯威尔事件
+  year: 1947
+  location: 美国新墨西哥州
+  hook: 军方先承认回收了一只"飞碟"，几小时后改口说是气象气球
+  known_controversies: ["军方两次声明自相矛盾", "Project Mogul 高空气球解释"]
+  seed_sources: ["RAAF 1947 新闻稿存档", "维基百科 Roswell incident"]
+- slug: phoenix-lights-1997
+  title_working: 凤凰城之光
+  year: 1997
+  location: 美国亚利桑那州
+  hook: 上千人目击巨大 V 形光阵缓慢飘过城市上空
+  known_controversies: ["照明弹解释 vs 固体飞行器目击", "州长事后承认也看到了"]
+  seed_sources: ["维基百科 Phoenix Lights"]
+- slug: nimitz-tictac-2004
+  title_working: 尼米兹号 Tic-Tac UFO
+  year: 2004
+  location: 美国加州外海
+  hook: 海军飞行员用战机红外吊舱拍下会瞬间加速的"白色 Tic-Tac"
+  known_controversies: ["五角大楼承认视频真实", "物理上无法解释的机动"]
+  seed_sources: ["美国国防部 2020 解密视频", "Nimitz UAP 报告"]
+- slug: tunguska-1908
+  title_working: 通古斯大爆炸
+  year: 1908
+  location: 俄罗斯西伯利亚
+  hook: 一场把两千平方公里森林夷平的爆炸，却找不到任何陨石坑
+  known_controversies: ["陨石/彗星空爆说", "至今无定论的能量来源"]
+  seed_sources: ["维基百科 Tunguska event"]
