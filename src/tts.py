@@ -10,15 +10,25 @@ class TTSEngine(Protocol):
 
 
 class FakeTTS:
-    """确定性离线 TTS：每字一个 word，每字 0.3s。"""
+    """确定性离线 TTS：每字 0.3s；音频为合法 WAV（8kHz 8-bit 静音），使 ffprobe 可读。"""
 
     def synth(self, text: str) -> tuple[bytes, list[dict]]:
+        import struct
+
         words = []
         t = 0.0
         for ch in text:
             words.append({"text": ch, "offset_sec": round(t, 3), "dur_sec": 0.3})
             t += 0.3
-        return b"FAKEAUDIO", words
+        rate = 8000
+        n = int(len(text) * 0.3 * rate)         # 时长 = 字数×0.3s
+        pcm = b"\x00" * n
+        header = (
+            b"RIFF" + struct.pack("<I", 36 + n) + b"WAVE"
+            + b"fmt " + struct.pack("<IHHIIHH", 16, 1, 1, rate, rate, 1, 8)
+            + b"data" + struct.pack("<I", n)
+        )
+        return header + pcm, words
 
 
 class EdgeTTS:

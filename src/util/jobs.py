@@ -5,9 +5,19 @@ from pathlib import Path
 
 
 def write_json(job: Path, name: str, data: dict) -> Path:
+    import os
+    import tempfile
+
     job.mkdir(parents=True, exist_ok=True)
     p = job / name
-    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    fd, tmp = tempfile.mkstemp(dir=job, prefix=f".{name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(data, ensure_ascii=False, indent=2))
+        os.replace(tmp, p)          # 原子替换
+    except BaseException:
+        os.unlink(tmp)
+        raise
     return p
 
 

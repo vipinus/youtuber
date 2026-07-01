@@ -6,7 +6,7 @@ from src.tts import FakeTTS, get_tts
 def test_fake_tts_deterministic():
     tts = FakeTTS()
     data, words = tts.synth("飞碟")
-    assert data  # 有音频字节
+    assert data[:4] == b"RIFF"        # 合法 WAV，ffprobe 可读
     assert [w["text"] for w in words] == ["飞", "碟"]
     assert words[0]["offset_sec"] == 0.0
     assert words[1]["offset_sec"] == 0.3
