@@ -52,3 +52,25 @@ def test_run_writes_ass(tmp_path):
     assert "[Events]" in txt
     assert txt.count("Dialogue:") == 1
     assert "飞碟" in txt
+
+
+def test_run_uses_script_text_with_punctuation(tmp_path):
+    from src.config import Config
+    from src.llm import FakeLLM
+    from src.context import Ctx
+    from src.util.jobs import write_json
+    from src.stages.s5_subs import run, OUTPUT
+    ctx = Ctx(slug="c", config=Config({}), root=tmp_path, llm=FakeLLM())
+    # script 原文有标点；timing 的 words 无标点（模拟真机 edge-tts）
+    write_json(ctx.job, "script.json", {"segments": [
+        {"id": 1, "text": "今天，很好。"},
+    ]})
+    write_json(ctx.job, "timing.json", {"segments": [
+        {"id": 1, "words": [
+            {"text": "今天", "start_sec": 0.0, "dur_sec": 0.6},
+            {"text": "很好", "start_sec": 0.6, "dur_sec": 0.6},
+        ]},
+    ]})
+    run(ctx)
+    txt = (ctx.job / OUTPUT).read_text(encoding="utf-8")
+    assert "，" in txt and "。" in txt        # 标点从 script 原文保留

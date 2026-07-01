@@ -59,8 +59,43 @@ def render_ass(lines: list[tuple[float, float, str]]) -> str:
     return _ASS_HEAD.format(font=font, size=size) + body
 
 
+def seg_lines(text: str, words: list[dict], max_chars: int) -> list[tuple[float, float, str]]:
+    lines = []
+    if not words:
+        return lines
+    start = words[0]["start_sec"]
+    end = words[-1]["start_sec"] + words[-1]["dur_sec"]
+    span = max(end - start, 0.001)
+    n = len(text)
+    buf = ""
+    line_start_i = 0
+    for i, ch in enumerate(text):
+        buf += ch
+        if len(buf) >= max_chars or ch in SENT_PUNCT or i == n - 1:
+            s = start + span * (line_start_i / n)
+            e = start + span * ((i + 1) / n)
+            lines.append((round(s, 3), round(e, 3), buf))
+            buf = ""
+            line_start_i = i + 1
+    return lines
+
+
 def run(ctx: Ctx) -> None:
     timing = read_json(ctx.job, INPUT)
     max_chars = ctx.config.get("subs.max_chars", 16)
-    lines = build_lines(timing, max_chars)
+
+    # 如果 script.json 存在，用新的 seg_lines 方法保留标点；否则用旧的 build_lines 方法
+    script_path = ctx.job / "script.json"
+    if script_path.exists():
+        script = read_json(ctx.job, "script.json")
+        tsegs = {s.get("id"): s for s in timing.get("segments", [])}
+        all_lines = []
+        for seg in script.get("segments", []):
+            words = tsegs.get(seg.get("id"), {}).get("words", [])
+            all_lines += seg_lines(seg.get("text", ""), words, max_chars)
+        lines = all_lines
+    else:
+        # 向后兼容：如果没有 script.json，使用旧的 build_lines
+        lines = build_lines(timing, max_chars)
+
     (ctx.job / OUTPUT).write_text(render_ass(lines), encoding="utf-8")
