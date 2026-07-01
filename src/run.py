@@ -8,7 +8,17 @@ from src.config import Config, load_config
 from src.context import Ctx
 from src.errors import StageBlocked
 from src.llm import LLMProvider, get_llm
-from src.stages import s1_topic, s2_research, s3_script, s4_tts, s5_subs, s6_media, s7_assemble
+from src.stages import (
+    s1_topic,
+    s2_research,
+    s3_script,
+    s4_tts,
+    s5_subs,
+    s6_media,
+    s7_assemble,
+    s8_meta,
+    s9_publish,
+)
 from src.util.jobs import exists
 
 STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
@@ -19,6 +29,8 @@ STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("s5_subs", s5_subs.run, s5_subs.OUTPUT),
     ("s6_media", s6_media.run, s6_media.OUTPUT),
     ("s7_assemble", s7_assemble.run, s7_assemble.OUTPUT),
+    ("s8_meta", s8_meta.run, s8_meta.OUTPUT),
+    ("s9_publish", s9_publish.run, s9_publish.OUTPUT),
 ]
 
 
