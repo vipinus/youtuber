@@ -27,6 +27,19 @@ def test_build_lines_breaks_on_punct_and_length():
     assert lines[1][2] == "很好"
 
 
+def test_build_lines_breaks_on_length():
+    chars = "一二三四五六七八九十甲乙丙丁戊己庚辛壬癸"  # 20 字，无标点
+    words = [{"text": ch, "start_sec": round(i * 0.3, 3), "dur_sec": 0.3}
+             for i, ch in enumerate(chars)]
+    lines = build_lines({"segments": [{"words": words}]}, max_chars=16)
+    assert len(lines) == 2
+    assert lines[0][2] == chars[:16]          # 前 16 字断行
+    assert lines[1][2] == chars[16:]          # 余 4 字
+    assert round(lines[0][0], 3) == 0.0       # 行首 = 首字 start
+    assert round(lines[0][1], 3) == 4.8       # 行尾 = 第16字(idx15) start+dur = 4.5+0.3
+    assert round(lines[1][0], 3) == 4.8       # 第2行首 = 第17字(idx16) start
+
+
 def test_run_writes_ass(tmp_path):
     ctx = Ctx(slug="c", config=Config({}), root=tmp_path, llm=FakeLLM())
     write_json(ctx.job, INPUT, {"segments": [{"words": [

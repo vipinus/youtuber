@@ -49,7 +49,7 @@ def build_lines(timing: dict, max_chars: int = 16) -> list[tuple[float, float, s
     return lines
 
 
-def render_ass(lines: list[tuple[float, float, str]], config: Ctx | None = None) -> str:
+def render_ass(lines: list[tuple[float, float, str]]) -> str:
     font = "Noto Sans CJK SC"
     size = 54
     body = "".join(
