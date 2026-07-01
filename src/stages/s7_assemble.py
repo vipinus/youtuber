@@ -47,4 +47,8 @@ def run(ctx: Ctx) -> None:
     segments = timing.get("segments", [])
     fps = ctx.config.get("video.fps", 30)
     cmd = build_cmd(ctx.job, segments, ctx.job / "subs.ass", fps, 1920, 1080)
-    subprocess.run(cmd, check=True, capture_output=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg 合成失败 (exit {proc.returncode}):\n{(proc.stderr or '')[-2000:]}"
+        )

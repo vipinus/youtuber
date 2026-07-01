@@ -44,3 +44,22 @@ def test_run_invokes_ffmpeg(tmp_path, monkeypatch):
     assert "ffmpeg" in calls["cmd"][0]
     assert calls["cmd"][-1] == str(ctx.job / OUTPUT)
     assert (ctx.job / OUTPUT).exists()
+
+
+def test_run_raises_with_ffmpeg_stderr(tmp_path, monkeypatch):
+    ctx = Ctx(slug="c", config=Config({"video": {"fps": 30}}), root=tmp_path, llm=FakeLLM())
+    write_json(ctx.job, INPUT, {"segments": [{"id": 1, "audio": "seg_001.mp3", "dur_sec": 1.0}], "total_sec": 1.0})
+    (ctx.job / "subs.ass").write_text("[Events]\n", encoding="utf-8")
+
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 1
+            stderr = "boom: invalid filtergraph"
+            stdout = ""
+        return R()
+
+    monkeypatch.setattr(s7.subprocess, "run", fake_run)
+    import pytest
+    with pytest.raises(RuntimeError) as ei:
+        run(ctx)
+    assert "boom: invalid filtergraph" in str(ei.value)     # ffmpeg 错误被抛出来
