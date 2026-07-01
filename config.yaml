@@ -9,6 +9,10 @@ tts:
   rate: "-8%"
 media:
   provider: nasa            # nasa | fake
+youtube:
+  provider: youtube        # youtube | fake
+  client_secret: secrets/client_secret.json
+  token: secrets/token.json
 video:
   resolution: 1080p
   fps: 30
