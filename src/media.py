@@ -104,6 +104,21 @@ def _norm_license(licenseurl: str | None, collection: str | list[str] | None) ->
     return None
 
 
+# 内容安全黑名单：命中即拒——合法(PD)不等于适合放进 UFO 悬疑解说，且大屠杀/暴行/
+# 血腥类画面会触发 YouTube 暴力政策→限流/下架。按 标题+subject+description 匹配。
+_CONTENT_BLOCKLIST = (
+    "holocaust", "todesmuehlen", "todesmühlen", "death mill", "concentration camp",
+    "atrocit", "genocide", "massacre", "corpse", "cadaver", "autopsy", "execution",
+    "lynching", "mutilat", "torture", "mass grave", "war crime", "extermination",
+    "dachau", "buchenwald", "auschwitz", "belsen", "beheading", "nazi camp",
+)
+
+
+def _is_blocked(*texts: str) -> bool:
+    hay = " ".join(t for t in texts if t).lower()
+    return any(term in hay for term in _CONTENT_BLOCKLIST)
+
+
 class ArchiveVideo:
     """archive.org 公有领域/宽松CC影片片段（mediatype:movies）。惰性 import requests。
 
@@ -127,13 +142,16 @@ class ArchiveVideo:
         rows = max(limit * 4, limit)          # 过量取，扛得住过滤掉的坏结果
         params = {
             "q": f"({query}) AND mediatype:movies",
-            "fl[]": ["identifier", "title", "licenseurl", "collection"],
+            "fl[]": ["identifier", "title", "licenseurl", "collection", "subject", "description"],
             "rows": rows,
             "output": "json",
         }
         r = requests.get(self.SEARCH, params=params, timeout=20)
         r.raise_for_status()
         docs = (r.json().get("response") or {}).get("docs", [])
+
+        def _join(v) -> str:
+            return " ".join(v) if isinstance(v, list) else str(v or "")
 
         out: list[dict] = []
         for d in docs:
@@ -143,6 +161,9 @@ class ArchiveVideo:
             token = _norm_license(d.get("licenseurl"), d.get("collection"))
             if token is None:                  # 护栏#2：没过白名单 -> 根本不作为候选
                 continue
+            title = d.get("title", identifier)
+            if _is_blocked(str(title), _join(d.get("subject")), _join(d.get("description"))):
+                continue                       # 内容安全：大屠杀/暴行/血腥类即便 PD 也拒
             out.append({
                 "manifest": identifier, "ext": "mp4", "license": token,
                 "attribution": f"Internet Archive / {d.get('title', identifier)}",

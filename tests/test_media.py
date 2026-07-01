@@ -324,3 +324,34 @@ def test_norm_license_rejects_explicit_incopyright_even_in_pd_collection():
     # 显式 PD/CC 正常放行
     assert _norm_license("http://creativecommons.org/publicdomain/zero/1.0/", None) == "public-domain"
     assert _norm_license("http://creativecommons.org/licenses/by/4.0/", "mirrortube") == "cc-by"
+
+
+def test_is_blocked_catches_atrocity_content():
+    """内容安全:大屠杀/暴行类(即便PD)必须挡——含首集实跑的 Death Mills case。"""
+    from src.media import _is_blocked
+    assert _is_blocked("Death Mills [Todesmuehlen]")                    # 标题命中
+    assert _is_blocked("Some Film", "Holocaust; Concentration camps")   # subject命中
+    assert _is_blocked("AUSCHWITZ liberation")                          # 大小写不敏感
+    assert not _is_blocked("Roswell Reports Vol. 6", "UFO; military")   # 正常题材放行
+    assert not _is_blocked("AAF Combat Camera Weekly Digest")
+
+
+def test_search_drops_blocked_even_if_pd(monkeypatch):
+    """search:内容黑名单命中的条目即便 PD 也不作为候选。"""
+    import src.media as media
+
+    class _Resp:
+        def raise_for_status(self): pass
+        def json(self):
+            return {"response": {"docs": [
+                {"identifier": "death_mills", "title": "Death Mills [Todesmuehlen]",
+                 "licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/",
+                 "subject": ["Holocaust", "concentration camps"]},
+                {"identifier": "roswell6", "title": "Roswell Reports Vol 6",
+                 "licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/",
+                 "subject": ["UFO"]},
+            ]}}
+    monkeypatch.setattr("requests.get", lambda *a, **k: _Resp())
+    out = media.ArchiveVideo().search("roswell", limit=5)
+    ids = [c["manifest"] for c in out]
+    assert "death_mills" not in ids and "roswell6" in ids
