@@ -60,3 +60,34 @@ def test_run_pipeline_stops_on_blocked(tmp_path, monkeypatch):
     ])
     run_mod.run_pipeline("s", Config({}), tmp_path, FakeLLM())
     assert ran == ["a"]                       # b 未运行（被 blocked 停下）
+
+
+class SeqLLM:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.i = 0
+
+    def generate(self, system, prompt):
+        r = self.responses[self.i]
+        self.i += 1
+        return r
+
+
+def test_end_to_end_topic_research_script(tmp_path):
+    import json
+    from src.util.jobs import read_json
+    topic = json.dumps({"title_working": "罗斯威尔", "year": 1947})
+    research = json.dumps({"facts": [
+        {"claim": "军方新闻稿", "evidence": "documented", "source": "存档"},
+        {"claim": "Mogul", "evidence": "documented", "source": "报告"},
+        {"claim": "Mogul2", "evidence": "documented", "source": "报告"},
+    ]})
+    script = json.dumps({"title_options": ["a", "b", "c"], "segments": [
+        {"id": 1, "text": "一二三四五六七八九十", "visual_query": "q", "est_sec": 8},
+    ]})
+    run_mod.run_pipeline("roswell-1947", Config({}), tmp_path,
+                         SeqLLM([topic, research, script]))
+    job = tmp_path / "roswell-1947"
+    assert read_json(job, "topic.json")["year"] == 1947
+    assert read_json(job, "research.json")["blocked"] is False
+    assert read_json(job, "script.json")["total_words"] == 10

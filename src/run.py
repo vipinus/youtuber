@@ -8,11 +8,13 @@ from src.config import Config, load_config
 from src.context import Ctx
 from src.errors import StageBlocked
 from src.llm import LLMProvider, get_llm
-from src.stages import s1_topic
+from src.stages import s1_topic, s2_research, s3_script
 from src.util.jobs import exists
 
 STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("s1_topic", s1_topic.run, s1_topic.OUTPUT),
+    ("s2_research", s2_research.run, s2_research.OUTPUT),
+    ("s3_script", s3_script.run, s3_script.OUTPUT),
 ]
 
 
