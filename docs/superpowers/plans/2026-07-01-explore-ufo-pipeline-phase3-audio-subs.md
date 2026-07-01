@@ -519,3 +519,13 @@ git commit -m "feat(run): 注册阶段④⑤ + 五阶段端到端"
 - **P4 成片**：`s6_media`（护栏#2 白名单源 NASA/archive.org/Wikimedia + license 校验 + Ken Burns）→ `s7_assemble`（ffmpeg：图片推拉 + 配音 + 字幕 + BGM 闪避 + 片头尾 → video.mp4）。s6 也是多产物（media/ + credits.json），沿用「credits.json 作 checkpoint」。
 - **P5 发布**：`s8_meta`（标题/简介/封面）→ `s9_publish`（护栏#3 YouTube Data API，`auto_upload:true`/`visibility:private`，一次性 OAuth）。
 - **LLM 升级（随时可插）**：`get_llm` 的 `claude` 分支，绕开 Gemini 每日配额 + 提升脚本质量。
+
+### P4 必处理输入（来自 P3 终审，写 P4 计划时必须纳入）
+
+1. **【Important】字幕丢标点**：真机 edge-tts 的中文 `WordBoundary` 是词/短语粒度且**丢标点**，s5 目前只读 `timing.json` 拼 `word["text"]` → 真实字幕无逗号/句号，且句读断行分支在真实数据上恒不触发。**修法**：s5 兼读 `script.json`，用 segment 原文 `text` 作字幕串（按词时间戳对齐断行点），保留标点。（spec §6⑤ 本就写的是「script.json + timing.json」，P3 计划当初简化成只读 timing.json，被真机发现推翻。）
+2. **【Important】音频↔时间轴漂移**：s4 段 `dur_sec` 只到最后一个词尾，漏了尾静音（真机实测末段欠 ~0.6s）→ `cursor += dur` 使 `timing.json` 全局时间比真实拼接音频**偏早**，40 段会累积到数秒，s7 拼真实 mp3 后字幕越走越超前。**修法**（P4 定夺）：(a) s4 用 `ffprobe`（已装 ffmpeg8）记真实 mp3 时长推进 cursor，让 timing.json 权威；或 (b) s7 给每段音频补尾静音到 `dur_sec`。
+3. **【建议】`write_json` 原子化**：`src/util/jobs.py` 现为非原子 `write_text`，若在写「作 checkpoint 的最后产物」（P3 `timing.json` / P4 `credits.json`）时被杀，会留半截文件而 `exists()` 跳过误信。改成临时文件 + `os.replace`，让整个「末产物=checkpoint」策略防崩溃。低成本，P4 加 s6 前做。
+4. **【建议】多产物阶段内的 per-artifact skip**：P4 s6 素材下载昂贵，重跑不应全下；考虑段级/文件级跳过（s4 现在重跑会全量重合成，TTS 免费快无所谓，但对 s6 是坏先例）。
+5. **【Minor】s4 `id` 处理**：文件名用 `seg.get("id",0)`（缺省 0）而记录用 `seg.get("id")`（→None）不一致，两个无 id 段会都写 `seg_000.mp3` 覆盖；`{"id":null}` 会 `int(None)` 崩。真实 s3 输出恒有整数 id，低风险，可 `enumerate` 统一。
+6. **【Minor】ASS 文本转义**：旁白若含 `{ } \` 会被 ASS 当 override 标签；防御性替换 `{}` 更稳。
+7. **【Minor】`subs.max_chars` / 字体字号入 config**：s5 读 `subs.max_chars`（默认16）但 config 无该键；字体字号硬编码。加个 `subs:` 块补齐可发现性。
