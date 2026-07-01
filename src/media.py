@@ -12,7 +12,12 @@ class MediaSource(Protocol):
 
 
 class FakeMedia:
-    """离线：确定性返回一个 PD 候选，fetch 写占位字节。"""
+    """离线：确定性返回一个 PD 候选，fetch 写一张合法的最小 JPEG。
+
+    注意：必须写真正可解码的图片（而非占位字节），否则下游 s7 的 ffmpeg
+    `-loop 1` 会对非法数据反复重试解码卡死、s8 的 PIL make_thumbnail 会崩，
+    使 media=fake 无法离线跑通整条流水线。
+    """
 
     def search(self, query: str, limit: int = 5) -> list[dict]:
         return [{
@@ -21,8 +26,10 @@ class FakeMedia:
         }]
 
     def fetch(self, candidate: dict, dest: Path) -> None:
+        from PIL import Image
+
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_bytes(b"FAKEIMG")
+        Image.new("RGB", (16, 16), (18, 20, 40)).save(dest, "JPEG")
 
 
 class NASAMedia:

@@ -22,7 +22,9 @@ def test_run_fetches_whitelisted_media(tmp_path):
     credits = read_json(ctx.job, OUTPUT)
     assert len(credits["items"]) == 2
     assert all(c["license"] == "public-domain" for c in credits["items"])
-    assert (ctx.job / "media" / "seg_001.jpg").read_bytes() == b"FAKEIMG"
+    from PIL import Image
+    with Image.open(ctx.job / "media" / "seg_001.jpg") as im:   # 合法 JPEG，下游 ffmpeg/PIL 可用
+        assert im.format == "JPEG"
     assert (ctx.job / "media" / "seg_002.jpg").exists()
 
 

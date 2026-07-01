@@ -10,7 +10,9 @@ def test_fake_media_search_and_fetch(tmp_path):
     assert cands and cands[0]["license"] == "public-domain"
     dest = tmp_path / "x.jpg"
     m.fetch(cands[0], dest)
-    assert dest.read_bytes() == b"FAKEIMG"
+    from PIL import Image
+    with Image.open(dest) as im:                     # 必须是可解码的合法 JPEG，不是占位字节
+        assert im.format == "JPEG" and im.size[0] > 0
 
 
 def test_get_media_source_fake():

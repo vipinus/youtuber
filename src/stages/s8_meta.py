@@ -42,9 +42,13 @@ def _fit(path: str, text: str, max_w: int, start: int = 90, lo: int = 40) -> Ima
 
 def make_thumbnail(dest: Path, title: str, bg: Path) -> None:
     W, H = 1280, 720
+    img = None
     if bg.exists() and bg.stat().st_size > 0:
-        img = Image.open(bg).convert("RGB").resize((W, H))
-    else:
+        try:
+            img = Image.open(bg).convert("RGB").resize((W, H))
+        except Exception:                                    # 素材非法/损坏(非图字节)→回退纯色底，别崩在最后一阶段
+            img = None
+    if img is None:
         img = Image.new("RGB", (W, H), (10, 12, 28))
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 110))          # 压暗保证字清晰
     img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")

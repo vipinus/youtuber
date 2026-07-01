@@ -31,3 +31,15 @@ def test_run_writes_meta_and_thumb(tmp_path):
     assert thumb.exists() and thumb.stat().st_size > 0
     from PIL import Image
     assert Image.open(thumb).size == (1280, 720)
+
+
+def test_make_thumbnail_survives_corrupt_bg(tmp_path):
+    """素材是非法/损坏字节时，make_thumbnail 回退纯色底而不崩（生产：NASA 返回非图）。"""
+    from src.stages.s8_meta import make_thumbnail
+    from PIL import Image
+    bad = tmp_path / "media" / "seg_001.jpg"
+    bad.parent.mkdir(parents=True, exist_ok=True)
+    bad.write_bytes(b"NOT-A-JPEG-\x00\xff garbage")
+    dest = tmp_path / "thumb.jpg"
+    make_thumbnail(dest, "罗斯威尔之谜", bad)          # 不应抛 UnidentifiedImageError
+    assert dest.exists() and Image.open(dest).size == (1280, 720)
