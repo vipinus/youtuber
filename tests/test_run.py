@@ -85,7 +85,7 @@ def test_end_to_end_topic_research_script(tmp_path):
         {"id": 1, "text": "一二三四五六七八九十", "visual_query": "q", "est_sec": 8},
     ]})
     run_mod.run_pipeline("roswell-1947", Config({}), tmp_path,
-                         SeqLLM([topic, research, script]))
+                         SeqLLM([topic, research, script]), to="s3_script")
     job = tmp_path / "roswell-1947"
     assert read_json(job, "topic.json")["year"] == 1947
     assert read_json(job, "research.json")["blocked"] is False
@@ -93,8 +93,6 @@ def test_end_to_end_topic_research_script(tmp_path):
 
 
 def test_e2e_through_subtitles(tmp_path):
-    import json
-    from src.util.jobs import read_json
     topic = json.dumps({"title_working": "罗斯威尔", "year": 1947})
     research = json.dumps({"facts": [
         {"claim": "a", "evidence": "documented", "source": "s"},
