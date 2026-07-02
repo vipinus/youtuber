@@ -34,10 +34,11 @@ def test_stages_for_resolves_original_and_doc():
     assert run_mod._stages_for("doc") is run_mod.STAGES_P7
 
 
-def test_stages_p7_includes_d10_archive_right_after_d9_publish():
-    """P7 T15：归档阶段接在发布之后，且是链路的最后一站。"""
+def test_stages_p7_includes_d10_archive_right_after_d9b_bilibili():
+    """P7 T15/T19：d9_publish(YouTube) → d9b_bilibili(B 站追加发布) →
+    d10_archive(归档，最后一站)，好让归档把 publish_bilibili.json 也搬走。"""
     names = [s[0] for s in run_mod.STAGES_P7]
-    assert names[-2:] == ["d9_publish", "d10_archive"]
+    assert names[-3:] == ["d9_publish", "d9b_bilibili", "d10_archive"]
 
 
 def test_stages_for_rejects_unknown_pipeline_name():
@@ -274,6 +275,7 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     assert (job / "thumb_bg.png").exists()
     assert (job / "thumb.jpg").exists()
     assert (job / "publish.json").exists()
+    assert (job / "publish_bilibili.json").exists()
     assert (job / "archive.json").exists()
 
     # 翻译真的走了 LLM（不是英文回退）
@@ -305,6 +307,11 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     publish = read_json(job, "publish.json")
     assert publish["videoId"] == "FAKE12345"
     assert publish["status"] == "private"
+
+    # 阶段⑨b：P7 T19 B 站追加发布——测试 config 没配 bilibili，默认 disabled，
+    # 不该真跑 biliup（e2e 全离线，没 monkeypatch subprocess 是因为压根不会走到）
+    publish_bili = read_json(job, "publish_bilibili.json")
+    assert publish_bili == {"status": "disabled"}
 
     # 阶段⑩：全链路最后一站——发布完的 job 真的搬去了（假）NAS，且校验通过
     archive = read_json(job, "archive.json")
