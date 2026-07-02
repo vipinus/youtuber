@@ -87,6 +87,12 @@ bilibili:                    # P7 T19：d9b_bilibili——YouTube 之外追加�
   tid: 201                   # 分区:科技-科学科普(可改纪录片区)
   only_self: true            # 冷启动:仅自己可见,审后手动放开
   line: ""                   # 上传线路,留空自动
+youtube_en:                  # P7 T20：d9c_publish_en——英文原声原片(source.mp4)追加发布到第二账号
+  enabled: true              # zion 生产开(secrets/token_en.json 已走过一次性授权，选第二个 Google 账号)
+  token: secrets/token_en.json
+  client_secret: secrets/client_secret.json
+  visibility: unlisted       # 英文源片频道:unlisted 起步(护栏#3:从不默认 public)
+  playlist: "Space / NASA Archive"
 archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
   dir: "~/nas/Share/youtuber" # 归档根目录(zion 上 NFS 自动挂载 tatara 的写入点)；`~` 会展开成当前用户家目录。
                              # 目录不存在/不可写 → 只告警+落 status:unreachable，不中止 run

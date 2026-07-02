@@ -35,10 +35,11 @@ def test_stages_for_resolves_original_and_doc():
 
 
 def test_stages_p7_includes_d10_archive_right_after_d9b_bilibili():
-    """P7 T15/T19：d9_publish(YouTube) → d9b_bilibili(B 站追加发布) →
-    d10_archive(归档，最后一站)，好让归档把 publish_bilibili.json 也搬走。"""
+    """P7 T15/T19/T20：d9_publish(YouTube) → d9b_bilibili(B 站追加发布) →
+    d9c_publish_en(英文原片追加发布到第二账号) → d10_archive(归档，最后一站)，
+    好让归档把 publish_bilibili.json / publish_en.json 也搬走。"""
     names = [s[0] for s in run_mod.STAGES_P7]
-    assert names[-3:] == ["d9_publish", "d9b_bilibili", "d10_archive"]
+    assert names[-4:] == ["d9_publish", "d9b_bilibili", "d9c_publish_en", "d10_archive"]
 
 
 def test_stages_for_rejects_unknown_pipeline_name():
@@ -277,6 +278,10 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     assert (job / "publish.json").exists()
     assert (job / "publish_bilibili.json").exists()
     assert (job / "archive.json").exists()
+
+    # P7 T20：youtube_en 默认关（cfg 没配），d9c_publish_en 只留 disabled 标记，
+    # 不碰网络/uploader，也不影响后面 d10_archive 照常跑完
+    assert read_json(job, "publish_en.json") == {"status": "disabled"}
 
     # 翻译真的走了 LLM（不是英文回退）
     zh_script = read_json(job, "zh_script.json")

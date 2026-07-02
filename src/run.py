@@ -17,6 +17,7 @@ from src.stages import (
     d7_assemble,
     d8_meta,
     d9b_bilibili,
+    d9c_publish_en,
     d10_archive,
     s1_topic,
     s2_research,
@@ -50,10 +51,13 @@ STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
 # meta.json+video.mp4+thumb.jpg，护栏#3 auto_upload/visibility 不变）——
 # d8_meta 产出的字段/文件约定与它完全兼容，不用改 s9_publish 本身。P7 T19：
 # d9b_bilibili 在 YouTube 发布之后追加发布到 B 站（biliup CLI，best-effort，
-# 失败/未登录/未开启都只留状态标记不中止 run）；放在 d9_publish 和 d10_archive
-# 之间，好让 d10_archive 把 publish_bilibili.json 也一并归档。d10_archive
-# 把发布完的 job 整份搬去 NAS 并裁剪本地大媒体，失败只留标记不中止 run（视频
-# 已经发布，归档是 best-effort）。
+# 失败/未登录/未开启都只留状态标记不中止 run）；d9c_publish_en（P7 T20）紧随
+# 其后，把英文原声原片 source.mp4（未配音）追加发布到第二个 YouTube 账号/频道
+# （档案/引流定位），同样 best-effort，独立 token（secrets/token_en.json）。
+# 两者都放在 d9_publish 和 d10_archive 之间，好让 d10_archive 把
+# publish_bilibili.json / publish_en.json 也一并归档。d10_archive 把发布完的
+# job 整份搬去 NAS 并裁剪本地大媒体，失败只留标记不中止 run（视频已经发布，
+# 归档是 best-effort）。
 STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d1_source", d1_source.run, d1_source.OUTPUT),
     ("d2_gpu", d2_gpu.run, d2_gpu.OUTPUT),
@@ -64,6 +68,7 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d8_meta", d8_meta.run, d8_meta.OUTPUT),
     ("d9_publish", s9_publish.run, s9_publish.OUTPUT),
     ("d9b_bilibili", d9b_bilibili.run, d9b_bilibili.OUTPUT),
+    ("d9c_publish_en", d9c_publish_en.run, d9c_publish_en.OUTPUT),
     ("d10_archive", d10_archive.run, d10_archive.OUTPUT),
 ]
 
