@@ -121,7 +121,7 @@ def test_happy_path_cmd_shape_and_output(tmp_path, monkeypatch):
     assert "--tid" in cmd and cmd[cmd.index("--tid") + 1] == "201"
     assert "--copyright" in cmd and cmd[cmd.index("--copyright") + 1] == "2"
     assert "--source" in cmd
-    assert cmd[cmd.index("--source") + 1] == "https://archive.org/download/nasadoc1/nasadoc1.mp4"
+    assert cmd[cmd.index("--source") + 1] == "https://archive.org/details/nasadoc1"  # 优先details页
     assert "--is-only-self" in cmd and cmd[cmd.index("--is-only-self") + 1] == "1"
 
     assert captured["cwd"] == str(cookie_dir)
