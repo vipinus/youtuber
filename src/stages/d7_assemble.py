@@ -32,13 +32,35 @@ SUBS = "subs.ass"
 NARRATION_TRACK = "narration.wav"          # 中间产物：第①遍拼好的旁白轨
 
 
+NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
+MAX_TEMPO = 1.4               # atempo 压缩比封顶：再快听感就"赶"了；超限段保留少量重叠并告警
+
+
+def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
+    """逐段算 atempo 压缩比：配音若长过「到下一条旁白开播」的窗口就压回去(留间隙)，
+    否则 1.0 保持原速。真跑发现 -18% 慢速让 85% 段溢出槽位、叠到下一条上——
+    字幕锚定原时间轴，压音频不压字幕，同步不受影响。"""
+    factors: list[float] = []
+    for i, seg in enumerate(segments):
+        start = float(seg.get("start", 0.0))
+        dur = float(seg.get("tts_dur", 0.0) or 0.0)
+        next_start = float(segments[i + 1]["start"]) if i + 1 < len(segments) else video_dur
+        window = max(next_start - start - NARRATION_GAP_SEC, 0.3)
+        f = dur / window if dur > 0 else 1.0
+        factors.append(min(max(f, 1.0), MAX_TEMPO) if f > 1.02 else 1.0)
+    return factors
+
+
 def build_narration_filter(segments: list[dict], video_dur: float) -> str:
-    """按每段 start 生成 adelay，再 amix 叠轨，最后 apad/atrim 补齐/裁到源片时长。"""
+    """按每段 start 生成 (必要时 atempo 压时 +) adelay，再 amix 叠轨，
+    最后 apad/atrim 补齐/裁到源片时长。"""
     n = len(segments)
+    factors = tempo_factors(segments, video_dur)
     parts: list[str] = []
     for idx, seg in enumerate(segments):
         ms = int(round(float(seg.get("start", 0.0)) * 1000))
-        parts.append(f"[{idx}:a]adelay={ms}|{ms}[d{idx}]")
+        tempo = f"atempo={factors[idx]:.4f}," if factors[idx] > 1.0 else ""
+        parts.append(f"[{idx}:a]{tempo}adelay={ms}|{ms}[d{idx}]")
     parts.append("".join(f"[d{idx}]" for idx in range(n)) + f"amix=inputs={n}:normalize=0[nar]")
     parts.append(f"[nar]apad=whole_dur={video_dur},atrim=0:{video_dur}[narp]")
     return ";".join(parts)
@@ -93,6 +115,11 @@ def run(ctx: Ctx) -> None:
 
     if segments:
         video_dur = round(duration_sec(source), 3)
+        capped = [s.get("id") for s, f in zip(segments, tempo_factors(segments, video_dur))
+                  if f >= MAX_TEMPO]
+        if capped:
+            ctx.warn(f"{ctx.slug}: d7 有 {len(capped)} 段压到 atempo 上限 {MAX_TEMPO} 仍偏长"
+                     f"(可能残留轻微重叠): seg {capped[:8]}")
         narration_path = job / NARRATION_TRACK
         cmd1 = build_narration_cmd(job, segments, video_dur, narration_path)
         proc1 = subprocess.run(cmd1, capture_output=True, text=True)

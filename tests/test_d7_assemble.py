@@ -367,3 +367,26 @@ def test_real_ffmpeg_smoke_zero_narration_produces_valid_video(tmp_path):
     assert has_v and has_a
     assert 1.0 <= dur <= 2.0
     assert any("无旁白段" in w for w in ctx.warnings)
+
+
+def test_tempo_factors_compress_overlapping_clips():
+    """真跑发现:-18%慢速让85%段溢出槽位叠到下一条。tempo_factors 须逐段压回窗口。"""
+    from src.stages.d7_assemble import tempo_factors, MAX_TEMPO
+    segs = [
+        {"id": 0, "start": 0.0, "tts_dur": 7.42},   # 窗口4.0s→需压 7.42/3.85≈1.93→封顶1.4
+        {"id": 1, "start": 4.0, "tts_dur": 3.0},    # 窗口6.0s→装得下→1.0
+        {"id": 2, "start": 10.0, "tts_dur": 5.5},   # 末段,窗口=video_dur-start=5.0→压~1.13
+    ]
+    f = tempo_factors(segs, video_dur=15.0)
+    assert f[0] == MAX_TEMPO                        # 超限封顶
+    assert f[1] == 1.0                              # 不溢出不动
+    assert 1.05 < f[2] < 1.2                        # 轻度压缩
+
+
+def test_narration_filter_includes_atempo_only_when_needed():
+    from src.stages.d7_assemble import build_narration_filter
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 7.0},    # 窗口3s→要压
+            {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下
+    fc = build_narration_filter(segs, video_dur=10.0)
+    assert "[0:a]atempo=1.4000,adelay=0|0[d0]" in fc    # 溢出段带atempo
+    assert "[1:a]adelay=3000|3000[d1]" in fc            # 正常段不带

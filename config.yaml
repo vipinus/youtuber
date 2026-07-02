@@ -8,7 +8,7 @@ llm:
 tts:
   provider: edge            # edge | fake
   voice: zh-CN-YunyangNeural
-  rate: "-18%"              # 语速放慢(悬疑解说更沉稳；原 -8% 偏快)
+  rate: "+0%"               # 正常语速(用户定)。慢速会让配音溢出时间槽(d7有atempo防撞兜底)
 media:
   provider: archive         # archive(archive.org PD影片,动态贴题) | nasa(静图) | fake
 subs:
