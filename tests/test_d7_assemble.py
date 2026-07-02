@@ -388,5 +388,25 @@ def test_narration_filter_includes_atempo_only_when_needed():
     segs = [{"id": 0, "start": 0.0, "tts_dur": 7.0},    # 窗口3s→要压
             {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "[0:a]atempo=1.4000,adelay=0|0[d0]" in fc    # 溢出段带atempo
+    assert "[0:a]atempo=1.4000,atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 压满仍超窗→截尾+淡出
     assert "[1:a]adelay=3000|3000[d1]" in fc            # 正常段不带
+
+
+def test_capped_overlong_clip_is_trimmed_with_fade():
+    """压到 MAX_TEMPO 仍超窗的段必须截尾+淡出——绝不双声同放(用户听出叠音)。"""
+    from src.stages.d7_assemble import build_narration_filter
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 10.0},   # 窗口2.85s,压1.4后仍7.1s→截
+            {"id": 1, "start": 3.0, "tts_dur": 1.0}]
+    fc = build_narration_filter(segs, video_dur=10.0)
+    assert "atrim=0:2.850" in fc and "afade=t=out" in fc
+    # 装得下的段不截
+    assert "[1:a]adelay=3000|3000[d1]" in fc
+
+
+def test_fitting_clip_not_trimmed():
+    """压缩后能装进窗口的段不截尾(只 atempo)。"""
+    from src.stages.d7_assemble import build_narration_filter
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3},    # 窗口2.85s,压1.16即装下
+            {"id": 1, "start": 3.0, "tts_dur": 1.0}]
+    fc = build_narration_filter(segs, video_dur=10.0)
+    assert "atempo=" in fc and "atrim=0:2.850" not in fc

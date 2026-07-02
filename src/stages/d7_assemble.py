@@ -36,31 +36,44 @@ NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
 MAX_TEMPO = 1.4               # atempo 压缩比封顶：再快听感就"赶"了；超限段保留少量重叠并告警
 
 
-def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
-    """逐段算 atempo 压缩比：配音若长过「到下一条旁白开播」的窗口就压回去(留间隙)，
-    否则 1.0 保持原速。真跑发现 -18% 慢速让 85% 段溢出槽位、叠到下一条上——
-    字幕锚定原时间轴，压音频不压字幕，同步不受影响。"""
-    factors: list[float] = []
+def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
+    """逐段算 (atempo 压缩比, 可用窗口秒)。窗口=到下一条旁白开播为止(留间隙)。"""
+    plan: list[tuple[float, float]] = []
     for i, seg in enumerate(segments):
         start = float(seg.get("start", 0.0))
         dur = float(seg.get("tts_dur", 0.0) or 0.0)
         next_start = float(segments[i + 1]["start"]) if i + 1 < len(segments) else video_dur
         window = max(next_start - start - NARRATION_GAP_SEC, 0.3)
         f = dur / window if dur > 0 else 1.0
-        factors.append(min(max(f, 1.0), MAX_TEMPO) if f > 1.02 else 1.0)
-    return factors
+        plan.append((min(max(f, 1.0), MAX_TEMPO) if f > 1.02 else 1.0, window))
+    return plan
+
+
+def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
+    """逐段算 atempo 压缩比：配音若长过「到下一条旁白开播」的窗口就压回去(留间隙)，
+    否则 1.0 保持原速。真跑发现 -18% 慢速让 85% 段溢出槽位、叠到下一条上——
+    字幕锚定原时间轴，压音频不压字幕，同步不受影响。"""
+    return [f for f, _ in _plan(segments, video_dur)]
 
 
 def build_narration_filter(segments: list[dict], video_dur: float) -> str:
     """按每段 start 生成 (必要时 atempo 压时 +) adelay，再 amix 叠轨，
-    最后 apad/atrim 补齐/裁到源片时长。"""
+    最后 apad/atrim 补齐/裁到源片时长。
+
+    压到 MAX_TEMPO 仍装不进窗口的段：硬截到窗口长 + 0.2s 淡出——宁可丢半句
+    尾音，绝不让两段旁白双声同放(用户实际听出叠音)。"""
     n = len(segments)
-    factors = tempo_factors(segments, video_dur)
+    plan = _plan(segments, video_dur)
     parts: list[str] = []
     for idx, seg in enumerate(segments):
         ms = int(round(float(seg.get("start", 0.0)) * 1000))
-        tempo = f"atempo={factors[idx]:.4f}," if factors[idx] > 1.0 else ""
-        parts.append(f"[{idx}:a]{tempo}adelay={ms}|{ms}[d{idx}]")
+        factor, window = plan[idx]
+        dur = float(seg.get("tts_dur", 0.0) or 0.0)
+        chain = f"atempo={factor:.4f}," if factor > 1.0 else ""
+        if dur > 0 and dur / factor > window + 0.05:   # 压满仍超窗 → 截尾+淡出
+            fade_start = max(window - 0.2, 0.0)
+            chain += f"atrim=0:{window:.3f},afade=t=out:st={fade_start:.3f}:d=0.2,"
+        parts.append(f"[{idx}:a]{chain}adelay={ms}|{ms}[d{idx}]")
     parts.append("".join(f"[d{idx}]" for idx in range(n)) + f"amix=inputs={n}:normalize=0[nar]")
     parts.append(f"[nar]apad=whole_dur={video_dur},atrim=0:{video_dur}[narp]")
     return ";".join(parts)

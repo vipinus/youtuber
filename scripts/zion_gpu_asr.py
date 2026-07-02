@@ -117,88 +117,54 @@ def classify_f0(median_f0: float | None) -> str | None:
     return None
 
 
-def _segment_median_f0(pitch_frames, rms_frames, frame_time: float,
-                        start: float, end: float):
-    """按时间切片拿该段的基频帧，过滤掉不可信帧后返回中位数（无 torch 时不可
-    单测，只在 zion 上跑）：
-      - 段时长 < MIN_SEGMENT_SEC -> None（太短统计不可靠）
-      - 帧本身在 [PITCH_FREQ_LOW, PITCH_FREQ_HIGH] 开区间内才算——
-        detect_pitch_frequency 对静音/噪声常年卡在搜索边界上，卡边界的是
-        检测失败而非真实基频
-      - 帧能量(RMS) 明显低于该段峰值(< 10%) 的算非人声/静音帧，一并丢弃
-      - 剩余可信帧 < MIN_VOICED_FRAMES -> None（几乎没测到人声，不够下结论）
-    """
-    if end - start < MIN_SEGMENT_SEC:
-        return None
-    if frame_time <= 0:
-        return None
-    start_idx = max(0, int(start / frame_time))
-    end_idx = max(start_idx + 1, int(round(end / frame_time)))
-    seg_pitch = pitch_frames[start_idx:end_idx]
-    seg_rms = rms_frames[start_idx:end_idx]
-    if seg_pitch.numel() == 0:
-        return None
-
-    rms_gate = seg_rms.max() * 0.1 if seg_rms.numel() else 0.0
-    mask = (
-        (seg_pitch > PITCH_FREQ_LOW) & (seg_pitch < PITCH_FREQ_HIGH)
-        & (seg_rms > rms_gate)
-    )
-    voiced = seg_pitch[mask]
-    if voiced.numel() < MIN_VOICED_FRAMES:
-        return None
-    return float(voiced.median())
-
-
 def detect_genders(vocals_path: Path, segments: list[dict]) -> list[str | None]:
-    """对 vocals 干声轨整轨算一次基频（比逐段重跑 pitch 快得多，见计划要求
-    "vectorize/slice efficiently"），再按每段 start/end 切片分类。返回与
-    segments 等长的 "male"/"female"/None 列表。
+    """对 vocals 干声轨整轨用 librosa.pyin 算一次基频，再按每段 start/end 切片
+    取中位分类。返回与 segments 等长的 "male"/"female"/None 列表。
 
-    只在这里 import torch/torchaudio——本地(zion 之外)静态检查/导入这个脚本
-    文件不需要装 torch，只有真在 zion 上跑到这一步才会触发 import。
+    为什么是 pyin 而不是 torchaudio.detect_pitch_frequency：真跑发现自相关法
+    对女声有经典的**倍频程错误**（200Hz 女声测成 ~100Hz 半频），把大批女声
+    判成男声（用户实际听出来了：18 段女声只检出 6 段）。pyin 抗倍频程错误，
+    同一素材复测 6→18 段女声、翻出的全是真女受访台词。
+
+    只在这里 import numpy/librosa——本地(zion 之外)静态检查/导入这个脚本
+    文件不需要装它们，只有真在 zion 上跑到这一步才会触发 import。
+    音频解码仍走 ffmpeg 子进程裸 PCM（这台 NixOS 机没有可用的音频后端）。
     """
-    import torch
-    import torchaudio
+    import librosa
+    import numpy as np
 
-    # 不用 torchaudio.load：这台 NixOS 机上它没有任何可用后端(soundfile 未装、
-    # ffmpeg 后端库不可见、torchcodec .so 加载失败——实测 RuntimeError
-    # "Couldn't find appropriate backend")。改用 ffmpeg 子进程直接解码成
-    # 16k 单声道裸 PCM(s16le)，零后端依赖；ffmpeg 二进制在 zion 验证可用。
     sr = 16000
     proc = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", str(vocals_path),
          "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(sr), "-"],
         capture_output=True, check=True,
     )
-    waveform = (torch.frombuffer(bytearray(proc.stdout), dtype=torch.int16)
-                .float().div_(32768.0).unsqueeze(0))
+    y = np.frombuffer(proc.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
-    pitch = torchaudio.functional.detect_pitch_frequency(
-        waveform, sr, freq_low=int(PITCH_FREQ_LOW), freq_high=int(PITCH_FREQ_HIGH),
-    )[0]                                            # [time_frames]（单声道，取第 0 个通道）
+    frame_length = 1024
+    f0, voiced, _prob = librosa.pyin(
+        y, fmin=max(65.0, PITCH_FREQ_LOW), fmax=PITCH_FREQ_HIGH,
+        sr=sr, frame_length=frame_length,
+    )
+    t_per_frame = (frame_length // 4) / sr          # librosa 默认 hop = frame//4
 
-    n_frames = int(pitch.shape[-1])
-    n_samples = int(waveform.shape[-1])
-    duration = n_samples / sr if sr else 0.0
-    frame_time = duration / n_frames if n_frames else 0.0
-
-    # 逐帧粗略 RMS（窗口与 pitch 帧对齐），用能量过滤掉非人声/静音帧。
-    hop = max(1, int(round(frame_time * sr))) if frame_time else n_samples
-    rms_vals = []
-    mono = waveform[0]
-    for i in range(n_frames):
-        lo = i * hop
-        hi = min(n_samples, lo + hop)
-        window = mono[lo:hi]
-        rms_vals.append(float(window.pow(2).mean().sqrt()) if window.numel() else 0.0)
-    rms = torch.tensor(rms_vals)
-
-    return [
-        classify_f0(_segment_median_f0(
-            pitch, rms, frame_time, seg.get("start", 0.0), seg.get("end", 0.0)))
-        for seg in segments
-    ]
+    out: list[str | None] = []
+    for seg in segments:
+        start = float(seg.get("start", 0.0))
+        end = float(seg.get("end", 0.0))
+        if end - start < MIN_SEGMENT_SEC:
+            out.append(None)
+            continue
+        i0 = max(0, int(start / t_per_frame))
+        i1 = max(i0 + 1, int(end / t_per_frame))
+        sl = f0[i0:i1]
+        v = voiced[i0:i1]
+        vals = sl[v & ~np.isnan(sl)]                # 只取 pyin 判定"有声"的可信帧
+        if len(vals) < MIN_VOICED_FRAMES:
+            out.append(None)
+            continue
+        out.append(classify_f0(float(np.median(vals))))
+    return out
 
 
 def main(argv: list[str]) -> int:
