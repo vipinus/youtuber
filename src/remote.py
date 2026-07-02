@@ -74,20 +74,28 @@ class SSHRemoteGPU:
         wrapper: str = "~/gpu-py",
         whisper_model: str = "medium.en",
         script_name: str = _ZION_SCRIPT_NAME,
+        timeout_sec: int = 1200,
     ):
         self.host = host
         self.workdir = workdir
         self.wrapper = wrapper
         self.whisper_model = whisper_model
         self.script_name = script_name
+        self.timeout_sec = timeout_sec         # 卡死的 zion(掉网/驱动挂)不能无限挂住管线
 
     # -- 底层 ssh/scp 封装：失败时报清晰错误（含命令 + stderr），不吞异常 --
 
     def _ssh(self, remote_cmd: str) -> str:
-        result = subprocess.run(
-            ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd],
-            capture_output=True, text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd],
+                capture_output=True, text=True, timeout=self.timeout_sec,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(
+                f"ssh 超时 {self.timeout_sec}s (host={self.host}): {remote_cmd!r} "
+                f"—— zion 可能掉线/卡死，管线中止而非无限挂起"
+            ) from e
         if result.returncode != 0:
             raise RuntimeError(
                 f"ssh 失败 (host={self.host}): {remote_cmd!r}\n"
@@ -97,10 +105,13 @@ class SSHRemoteGPU:
         return result.stdout
 
     def _scp(self, src: str, dst: str) -> None:
-        result = subprocess.run(
-            ["scp", "-o", "BatchMode=yes", src, dst],
-            capture_output=True, text=True,
-        )
+        try:
+            result = subprocess.run(
+                ["scp", "-o", "BatchMode=yes", src, dst],
+                capture_output=True, text=True, timeout=self.timeout_sec,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"scp 超时 {self.timeout_sec}s: {src} -> {dst}") from e
         if result.returncode != 0:
             raise RuntimeError(
                 f"scp 失败: {src} -> {dst}\n"
@@ -147,5 +158,6 @@ def get_remote(config: Config) -> RemoteGPU:
             host=config.get("remote.host", "fabric@zion"),
             workdir=config.get("remote.workdir", "~/p7-work"),
             whisper_model=config.get("remote.whisper_model", "medium.en"),
+            timeout_sec=config.get("remote.timeout_sec", 1200),
         )
     raise ValueError(f"未知 remote provider: {provider}")

@@ -20,6 +20,7 @@ remote:
   host: fabric@zion        # ssh -o BatchMode=yes fabric@zion (key-based, NixOS, RTX 3070 Ti)
   workdir: ~/p7-work       # zion 上的工作目录(脚本+音频+产物)
   whisper_model: medium.en # 样片档(GPU faster-whisper);production 可切 large-v3
+  timeout_sec: 1200        # ssh/scp 超时上限;zion 卡死时中止管线而非无限挂起
 video:
   resolution: 1080p
   fps: 30

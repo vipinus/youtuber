@@ -185,3 +185,26 @@ def test_ssh_remote_gpu_raises_clear_error_on_scp_failure(tmp_path, monkeypatch)
     remote = SSHRemoteGPU()
     with pytest.raises(RuntimeError, match="scp 失败"):
         remote.transcribe_separate(audio, tmp_path / "out")
+
+
+def test_ssh_timeout_raises_clear_error(monkeypatch):
+    """zion 卡死时 ssh 超时应中止并报清晰错误，而不是无限挂起。"""
+    import subprocess as sp
+    from src.remote import SSHRemoteGPU
+
+    def _boom(*a, **k):
+        raise sp.TimeoutExpired(cmd="ssh", timeout=k.get("timeout", 1))
+    monkeypatch.setattr(sp, "run", _boom)
+    r = SSHRemoteGPU(timeout_sec=5)
+    try:
+        r._ssh("echo hi")
+        assert False, "应抛超时"
+    except RuntimeError as e:
+        assert "超时" in str(e)
+
+
+def test_get_remote_passes_timeout(monkeypatch):
+    from src.config import Config
+    from src.remote import get_remote, SSHRemoteGPU
+    r = get_remote(Config({"remote": {"provider": "ssh", "timeout_sec": 77}}))
+    assert isinstance(r, SSHRemoteGPU) and r.timeout_sec == 77
