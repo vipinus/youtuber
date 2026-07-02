@@ -42,8 +42,11 @@ DEFAULT_MODEL = "medium.en"
 MIN_SEGMENT_SEC = 0.6      # 短于此不测（太短基频统计不可靠）
 PITCH_FREQ_LOW = 60.0      # detect_pitch_frequency 的搜索下限(Hz)
 PITCH_FREQ_HIGH = 400.0    # 搜索上限(Hz)——覆盖成年男女声基频范围
-MALE_MAX_HZ = 145.0        # 中位基频 < 此值 -> "male"
-FEMALE_MIN_HZ = 175.0      # 中位基频 > 此值 -> "female"
+MALE_MAX_HZ = 150.0        # 中位基频 < 此值 -> "male"
+FEMALE_MIN_HZ = 165.0      # 中位基频 > 此值 -> "female"
+# 阈值用真片校准(ISS Benefits doc):男主旁白中位 115Hz、90分位 139Hz;灰区里
+# 163-170Hz 的段比男旁白高 ~50%,几乎必是女受访者,原 175 门槛把她们全漏成
+# null→落男声(恰是用户投诉)。165 是文献常用男女分界;150-165 仍留 null 缓冲。
 # [145, 175] 之间（含边界）视为模糊地带 -> None，宁可不猜。
 MIN_VOICED_FRAMES = 3      # 可信帧太少(基本没测到人声) -> None
 
@@ -158,13 +161,18 @@ def detect_genders(vocals_path: Path, segments: list[dict]) -> list[str | None]:
     import torch
     import torchaudio
 
-    waveform, sr = torchaudio.load(str(vocals_path))
-    if waveform.shape[0] > 1:                    # 立体声 -> 单声道，基频检测不需要声道信息
-        waveform = waveform.mean(dim=0, keepdim=True)
-    target_sr = 16000
-    if sr != target_sr:                            # 降到 16k 提速，基频检测不需要更高采样率
-        waveform = torchaudio.functional.resample(waveform, sr, target_sr)
-        sr = target_sr
+    # 不用 torchaudio.load：这台 NixOS 机上它没有任何可用后端(soundfile 未装、
+    # ffmpeg 后端库不可见、torchcodec .so 加载失败——实测 RuntimeError
+    # "Couldn't find appropriate backend")。改用 ffmpeg 子进程直接解码成
+    # 16k 单声道裸 PCM(s16le)，零后端依赖；ffmpeg 二进制在 zion 验证可用。
+    sr = 16000
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(vocals_path),
+         "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", str(sr), "-"],
+        capture_output=True, check=True,
+    )
+    waveform = (torch.frombuffer(bytearray(proc.stdout), dtype=torch.int16)
+                .float().div_(32768.0).unsqueeze(0))
 
     pitch = torchaudio.functional.detect_pitch_frequency(
         waveform, sr, freq_low=int(PITCH_FREQ_LOW), freq_high=int(PITCH_FREQ_HIGH),
