@@ -51,11 +51,21 @@ def build_lines(timing: dict, max_chars: int = 16) -> list[tuple[float, float, s
     return lines
 
 
+def strip_display_punct(text: str) -> str:
+    """屏显字幕去标点(用户定)：逗号→空格、句号删掉。只影响烧进画面的文本；
+    断句(_split_cues)与配音文本仍用带标点原文。半角句点仅删句尾(保护 3.5 这类小数)。"""
+    import re
+    text = text.replace("，", " ").replace(",", " ")
+    text = text.replace("。", "")
+    text = re.sub(r"\.(?=\s|$)", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def render_ass(lines: list[tuple[float, float, str]]) -> str:
     font = "Noto Sans CJK SC"
     size = 54
     body = "".join(
-        f"Dialogue: 0,{ass_time(s)},{ass_time(e)},Default,,0,0,0,,{text}\n"
+        f"Dialogue: 0,{ass_time(s)},{ass_time(e)},Default,,0,0,0,,{strip_display_punct(text)}\n"
         for s, e, text in lines
     )
     return _ASS_HEAD.format(font=font, size=size) + body

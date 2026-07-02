@@ -73,7 +73,8 @@ def test_run_uses_script_text_with_punctuation(tmp_path):
     ]})
     run(ctx)
     txt = (ctx.job / OUTPUT).read_text(encoding="utf-8")
-    assert "，" in txt and "。" in txt        # 标点从 script 原文保留
+    assert "今天 很好" in txt                 # 逗号→空格、句号删(屏显去标点,用户定)
+    assert "，" not in txt and "。" not in txt
 
 
 def test_split_cues_full_sentences_and_trailing_punct():
@@ -126,3 +127,11 @@ def test_split_cues_no_leading_punct_after_hardbreak():
     cues = _split_cues(text, max_chars=20)
     assert all(c[0] not in "，。！？、；：：" for c in cues)   # 无一以标点开头
     assert "".join(cues) == text                            # 不丢字
+
+
+def test_strip_display_punct_rules():
+    """屏显去标点(用户定):逗号→空格,句号删;保护小数点;不碰问叹号。"""
+    from src.stages.s5_subs import strip_display_punct
+    assert strip_display_punct("然而，军方很快改口。") == "然而 军方很快改口"
+    assert strip_display_punct("速度是 3.5 倍。") == "速度是 3.5 倍"
+    assert strip_display_punct("这是飞碟，还是气球？") == "这是飞碟 还是气球？"

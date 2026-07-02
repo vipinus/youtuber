@@ -36,7 +36,7 @@ def test_run_writes_valid_ass_with_dialogue_lines(tmp_path):
     assert "[Script Info]" in txt
     assert "[Events]" in txt
     assert txt.count("Dialogue:") == 1
-    assert "飞碟目击事件。" in txt
+    assert "飞碟目击事件" in txt and "。" not in txt   # 屏显去句号(用户定)
     assert ctx.warnings == []
 
 
@@ -63,9 +63,10 @@ def test_long_segment_splits_into_multiple_cues_within_time_span(tmp_path):
     dialogue_lines = [ln for ln in txt.splitlines() if ln.startswith("Dialogue:")]
     assert len(dialogue_lines) == len(expected_cues)
 
-    # texts, in order, match _split_cues output exactly (reused, not reinvented)
+    # texts, in order, match _split_cues output (经屏显去标点后,复用未重造)
+    from src.stages.s5_subs import strip_display_punct
     texts = [ln.rsplit(",", 1)[-1] for ln in dialogue_lines]
-    assert texts == expected_cues
+    assert texts == [strip_display_punct(c) for c in expected_cues]
     for t in texts:
         assert t[0] not in "，。！？、；："        # no cue starts with punctuation (s5 guarantee)
 
