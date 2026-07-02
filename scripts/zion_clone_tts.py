@@ -40,6 +40,67 @@ from pathlib import Path
 MIN_REF_SEC = 3.0      # 参考音频太短 F5 抓不住音色特征
 MAX_REF_SEC = 15.0     # 太长拖慢单段推理，且更容易夹带背景噪声/换气声
 
+# -- 数字转汉字(纯函数,零依赖)——F5 双语模型遇英文参考音色会把阿拉伯数字念成
+# 英文(用户实听发现"305米"念成 three hundred five 米)。喂 TTS 前把数字规范化
+# 成汉字;字幕不动(屏显阿拉伯数字更清爽,只在这里改 gen_text)。 --------------
+import re
+
+_CN_DIGITS = "零一二三四五六七八九"
+_CN_UNITS = ["", "十", "百", "千"]
+_CN_GROUPS = ["", "万", "亿"]
+
+
+def _int_to_cn(n: int) -> str:
+    """整数→中文数词(到亿级)。10-19 说"十X"不说"一十X"。"""
+    if n == 0:
+        return "零"
+    groups = []
+    while n > 0:
+        groups.append(n % 10000)
+        n //= 10000
+    parts = []
+    for gi in range(len(groups) - 1, -1, -1):
+        g = groups[gi]
+        if g == 0:
+            if parts and not parts[-1].endswith("零"):
+                parts.append("零")
+            continue
+        s, zero_pending = "", False
+        for pos in range(3, -1, -1):
+            d = (g // (10 ** pos)) % 10
+            if d == 0:
+                if s:
+                    zero_pending = True
+                continue
+            if zero_pending:
+                s += "零"
+                zero_pending = False
+            s += _CN_DIGITS[d] + _CN_UNITS[pos]
+        if gi == len(groups) - 1 and s.startswith("一十"):
+            s = s[1:]                       # 12 -> 十二
+        if parts and g < 1000:              # 跨组前导零:10086 -> 一万零八十六
+            s = "零" + s
+        parts.append(s + _CN_GROUPS[gi])
+    out = "".join(parts)
+    return out.rstrip("零") or "零"
+
+
+def _digits_cn(s: str) -> str:
+    return "".join(_CN_DIGITS[int(c)] for c in s)
+
+
+def normalize_zh_numbers(text: str) -> str:
+    """中文旁白里的数字→汉字读法:年份逐位(1975年→一九七五年)、百分比、
+    小数(3.5→三点五)、普通整数(305→三百零五)。顺序敏感:年份→百分比→小数→整数。"""
+    text = re.sub(r"(\d{4})(?=年)", lambda m: _digits_cn(m.group(1)), text)
+    text = re.sub(r"(\d+)(?:\.(\d+))?%",
+                  lambda m: "百分之" + _int_to_cn(int(m.group(1)))
+                  + (("点" + _digits_cn(m.group(2))) if m.group(2) else ""), text)
+    text = re.sub(r"(\d+)\.(\d+)",
+                  lambda m: _int_to_cn(int(m.group(1))) + "点" + _digits_cn(m.group(2)), text)
+    text = re.sub(r"\d+", lambda m: _int_to_cn(int(m.group(0))), text)
+    return text
+
 
 def _dur(seg: dict) -> float:
     return float(seg.get("end", 0.0)) - float(seg.get("start", 0.0))
@@ -154,7 +215,8 @@ def main(argv: list[str]) -> int:
             ref_text = ref_seg.get("en", "")
             out_wav = out_dir / f"n{seg_id:03d}.wav"
             tts.infer(
-                ref_file=str(ref_file), ref_text=ref_text, gen_text=zh,
+                ref_file=str(ref_file), ref_text=ref_text,
+                gen_text=normalize_zh_numbers(zh),   # 数字→汉字,防英文参考带偏数字读音
                 file_wave=str(out_wav), remove_silence=False,
             )
             n_ok += 1

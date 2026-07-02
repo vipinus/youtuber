@@ -151,3 +151,30 @@ def test_main_usage_error_does_not_import_f5_tts(monkeypatch, capsys):
     assert rc == 2
     err = capsys.readouterr().err
     assert "用法" in err
+
+
+def test_normalize_zh_numbers_real_cases():
+    """真片实句:数字必须转汉字,否则 F5 被英文参考带偏念英文数字(用户实听发现)。"""
+    f = zct.normalize_zh_numbers
+    assert f("它的直径有305米。") == "它的直径有三百零五米。"
+    assert f("大约1000英尺") == "大约一千英尺"
+    assert f("1975年就开始经营了") == "一九七五年就开始经营了"
+    assert f("每24小时算一天") == "每二十四小时算一天"
+    assert f("以50微米的精确度") == "以五十微米的精确度"
+    assert f("每16天才能收到一次数据") == "每十六天才能收到一次数据"
+    assert f("速度是3.5倍") == "速度是三点五倍"
+    assert f("占50%") == "占百分之五十"
+    assert f("在离我们260英里高空") == "在离我们二百六十英里高空"
+    assert f("没有数字的句子。") == "没有数字的句子。"
+
+
+def test_int_to_cn_edges():
+    f = zct._int_to_cn
+    assert f(0) == "零"
+    assert f(10) == "十"
+    assert f(12) == "十二"
+    assert f(110) == "一百一十"
+    assert f(305) == "三百零五"
+    assert f(1000) == "一千"
+    assert f(10086) == "一万零八十六"
+    assert f(120000) == "十二万"
