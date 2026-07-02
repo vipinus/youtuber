@@ -77,6 +77,29 @@ def transcribe(wav16k: Path, model_name: str = DEFAULT_MODEL) -> dict:
     return {"duration": round(info.duration, 2), "segments": segs}
 
 
+
+CHUNK_SEC = 900.0          # 长音频分段分离:81min 整轨 demucs 后处理吃 24GB+ 被 OOM-kill(RC=137,内核实锤)
+                           # 15min/段内存峰值约 1/5,段间直接拼接(背景床/克隆参考对切点不敏感)
+
+
+def _audio_duration(path: Path) -> float:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(path)], capture_output=True, text=True)
+    try:
+        return float(out.stdout.strip())
+    except ValueError:
+        return 0.0
+
+
+def _concat_mp3(parts: list[Path], dest: Path) -> None:
+    lst = dest.with_suffix(".list")
+    lst.write_text("".join(f"file '{p}'\n" for p in parts), encoding="utf-8")
+    subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(lst),
+                    "-c", "copy", str(dest)], check=True, capture_output=True)
+    lst.unlink(missing_ok=True)
+
+
 def separate(audio_in: Path, work_dir: Path) -> tuple[Path, Path]:
     """demucs 人声分离，返回 (vocals.mp3, no_vocals.mp3) 路径二元组。
 
@@ -88,7 +111,38 @@ def separate(audio_in: Path, work_dir: Path) -> tuple[Path, Path]:
     输出必须 `--mp3`(默认 wav 落盘要 torchcodec,这台机器上不可用)。
     vocals.mp3 供性别检测+克隆参考;no_vocals.mp3 是背景床(original 模式)。
     """
-    demucs_out = work_dir / "demucs_out"
+    dur = _audio_duration(audio_in)
+    if dur <= CHUNK_SEC * 1.2:                       # 短音频:整轨一次过(留 20% 余量避免无谓分段)
+        return _separate_once(audio_in, work_dir / "demucs_out")
+
+    # 长音频:切段→逐段分离→拼接(OOM 防线)
+    print(f"音频 {dur:.0f}s 超过 {CHUNK_SEC:.0f}s,分段分离防 OOM")
+    chunks_dir = work_dir / "chunks"
+    chunks_dir.mkdir(parents=True, exist_ok=True)
+    v_parts: list[Path] = []
+    nv_parts: list[Path] = []
+    i, start = 0, 0.0
+    while start < dur:
+        piece = chunks_dir / f"part{i:02d}.wav"
+        subprocess.run(
+            ["ffmpeg", "-y", "-i", str(audio_in), "-ss", f"{start:.3f}",
+             "-t", f"{CHUNK_SEC:.3f}", "-c", "copy", str(piece)],
+            check=True, capture_output=True)
+        v, nv = _separate_once(piece, chunks_dir / f"out{i:02d}")
+        v_parts.append(v)
+        nv_parts.append(nv)
+        piece.unlink(missing_ok=True)                # 段 wav 用完即删,省磁盘
+        start += CHUNK_SEC
+        i += 1
+    vocals = work_dir / "vocals.mp3"
+    no_vocals = work_dir / "no_vocals.mp3"
+    _concat_mp3(v_parts, vocals)
+    _concat_mp3(nv_parts, no_vocals)
+    print(f"分段分离完成({i} 段)并拼接")
+    return vocals, no_vocals
+
+
+def _separate_once(audio_in: Path, demucs_out: Path) -> tuple[Path, Path]:
     attempts = [("htdemucs_ft", "cuda"), ("htdemucs_ft", "cpu"), ("htdemucs", "cpu")]
     last_err: Exception | None = None
     for model, device in attempts:
