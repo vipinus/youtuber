@@ -1,7 +1,8 @@
 """一次性 YouTube 授权：跑浏览器同意，把 token 存到指定路径。
-用法：.venv/bin/python -m src.auth_youtube [token输出路径]
-     默认 secrets/token.json;第二账号(如英文原片频道)传 secrets/token_en.json,
-     浏览器里选对应的 Google 账号即可——同一个 client_secret 可给任意账号授权。
+用法：.venv/bin/python -m src.auth_youtube [token输出路径] [client_secret路径]
+     默认 secrets/token.json + secrets/client_secret.json;
+     第二账号(英文原片频道)：
+       python -m src.auth_youtube secrets/token_en.json secrets/client_secret_en.json
 前置：secrets/client_secret.json（从 Google Cloud 下载，见 docs/youtube-oauth-setup.md）。
 """
 from __future__ import annotations
@@ -16,8 +17,9 @@ def main() -> None:
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     token_path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("secrets/token.json")
+    client_secret = sys.argv[2] if len(sys.argv) > 2 else "secrets/client_secret.json"
     token_path.parent.mkdir(parents=True, exist_ok=True)
-    flow = InstalledAppFlow.from_client_secrets_file("secrets/client_secret.json", SCOPES)
+    flow = InstalledAppFlow.from_client_secrets_file(client_secret, SCOPES)
     # access_type=offline + prompt=consent 确保拿到 refresh_token，否则无人值守次日会 401
     creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
     token_path.write_text(creds.to_json(), encoding="utf-8")
