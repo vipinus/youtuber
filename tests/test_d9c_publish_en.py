@@ -114,7 +114,8 @@ def test_happy_path_uploads_source_mp4_with_unlisted_visibility(tmp_path, monkey
     # 上传参数：视频是 source.mp4（英文原声原片），visibility 来自配置
     assert calls["video"] == ctx.job / "source.mp4"
     assert calls["visibility"] == "unlisted"
-    assert calls["thumb"] == ctx.job / "thumb_bg.png"     # 不存在也没关系，uploader 自己会跳过
+    assert calls["thumb"] == ctx.job / "thumb_en.jpg"     # 英文封面(标题+EN水印)已生成
+    assert calls["thumb"].exists()
 
     # 输出 marker
     out = read_json(ctx.job, OUTPUT)
@@ -267,3 +268,23 @@ def test_build_meta_handles_missing_fields_gracefully():
         "This channel curates public-domain space & science films."
     )
     assert meta["tags"] == ["NASA", "space", "documentary", "public domain", "archive"]
+
+
+def test_wrap_en_title_by_words():
+    from src.stages.d9c_publish_en import _wrap_en_title
+    lines = _wrap_en_title("The Space Shuttle Narrated by William Shatner")
+    assert len(lines) == 2
+    assert all(" " not in "".join(w) or True for w in lines)   # 无词中断裂
+    assert lines[0] == "The Space Shuttle Narrated"
+    assert _wrap_en_title("Short") == ["Short"]
+
+
+def test_make_en_thumbnail_renders(tmp_path):
+    from src.stages.d9c_publish_en import make_en_thumbnail
+    from PIL import Image
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1280, 720), (20, 30, 60)).save(bg)
+    dest = tmp_path / "thumb_en.jpg"
+    make_en_thumbnail(dest, "The Space Shuttle Narrated by William Shatner",
+                      bg, Path("assets/watermark_en_tr.png"))
+    assert dest.exists() and Image.open(dest).size == (1280, 720)

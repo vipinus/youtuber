@@ -62,6 +62,70 @@ def _uploader_for(config: Config) -> Uploader:
     raise ValueError(f"未知 youtube_en provider: {provider}")
 
 
+def _wrap_en_title(title: str, max_per_line: int = 26) -> list[str]:
+    """英文标题按词折行(最多两行)——中文的按字折行对英文会切在单词中间。"""
+    words = (title or "").split()
+    if not words:
+        return [""]
+    lines, cur = [], ""
+    for w in words:
+        cand = f"{cur} {w}".strip()
+        if len(cand) > max_per_line and cur:
+            lines.append(cur)
+            cur = w
+            if len(lines) == 2:
+                break
+        else:
+            cur = w if not cur else cand
+    if cur and len(lines) < 2:
+        lines.append(cur)
+    return lines[:2]
+
+
+def make_en_thumbnail(dest: Path, title: str, bg: Path, watermark: Path,
+                      font_path: str | None = None) -> None:
+    """英文封面:AI 背景 + 底部渐变 + 金属英文标题(词级折行) + 右上英文水印面板。
+    复用 d8_meta 的金属字/水印面板组件,只有折行策略换成英文词级。"""
+    from PIL import Image
+    from src.stages.d8_meta import _metallic_text_layer, _panel_with_watermark
+    from src.stages.s8_meta import TITLE_FONT, _fit
+
+    W, H = 1280, 720
+    img = None
+    if bg and Path(bg).exists() and Path(bg).stat().st_size > 0:
+        try:
+            img = Image.open(bg).convert("RGB").resize((W, H))
+        except Exception:
+            img = None
+    if img is None:
+        img = Image.new("RGB", (W, H), (10, 12, 28))
+    img = img.convert("RGBA")
+
+    grad = Image.new("L", (1, H), 0)
+    for y in range(H):
+        t = max(0.0, (y - H * 0.45) / (H * 0.55))
+        grad.putpixel((0, y), int(200 * min(1.0, t)))
+    shadow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    shadow.putalpha(grad.resize((W, H)))
+    img = Image.alpha_composite(img, shadow)
+
+    lines = _wrap_en_title(title)
+    font = _fit(font_path or TITLE_FONT, max(lines, key=len), int(W * 0.88), start=88, lo=36)
+    lh = font.size + 12
+    y0 = H - 88 - lh * (len(lines) - 1)
+    img.alpha_composite(_metallic_text_layer(lines, font, W, H, y0, lh))
+
+    if watermark and Path(watermark).exists():
+        try:
+            wm = Image.open(watermark).convert("RGBA")
+            panel = _panel_with_watermark(wm)
+            img.alpha_composite(panel, (W - 24 - panel.width, 24))
+        except Exception:
+            pass
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    img.convert("RGB").save(dest, "JPEG", quality=88, optimize=True)
+
+
 def _build_meta(source: dict) -> dict:
     title = (source.get("title") or "")[:_TITLE_MAX_CHARS]
     identifier = source.get("identifier")
@@ -98,7 +162,17 @@ def run(ctx: Ctx) -> None:
         meta = _build_meta(source)
         uploader = _uploader_for(ctx.config)
         video = ctx.job / "source.mp4"                # 英文原声原片，非中文配音的 video.mp4
-        thumb = ctx.job / "thumb_bg.png"               # AI 背景图(无中文字)；不存在时 uploader 自动跳过封面
+        # 英文封面:AI 背景 + 金属英文标题 + 英文水印(生成失败退回裸背景图,再不行跳过封面)
+        thumb = ctx.job / "thumb_en.jpg"
+        try:
+            make_en_thumbnail(
+                thumb, meta["title"], ctx.job / "thumb_bg.png",
+                Path(ctx.config.get("youtube_en.watermark", "assets/watermark_en_tr.png")),
+                font_path=ctx.config.get("paths.title_font", None),
+            )
+        except Exception as e:  # noqa: BLE001 — 封面失败不挡上传
+            ctx.warn(f"{ctx.slug}: 英文封面生成失败({type(e).__name__})，退回背景图")
+            thumb = ctx.job / "thumb_bg.png"
         result = uploader.upload(video, meta, thumb, visibility)
     except Exception as e:  # noqa: BLE001 — 追加发布失败绝不能拖累主发布/B站发布/归档链条
         ctx.warn(f"{ctx.slug}: 英文原片上传失败({type(e).__name__}: {e})")
