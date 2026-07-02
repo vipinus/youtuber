@@ -38,8 +38,16 @@ def build_prompt(items: list[dict]) -> str:
 
 def _translate_batch(ctx: Ctx, batch: list[tuple[int, str]]) -> dict[int, str]:
     items = [{"id": i, "en": text} for i, text in batch]
-    raw = ctx.llm.generate(SYSTEM, build_prompt(items))
-    parsed = extract_json(raw)
+    parsed = None
+    for attempt in range(3):                    # LLM 偶发吐残缺 JSON(真跑遇到)——重试而非杀死整条 run
+        raw = ctx.llm.generate(SYSTEM, build_prompt(items))
+        try:
+            parsed = extract_json(raw)
+            break
+        except (json.JSONDecodeError, ValueError) as e:
+            ctx.warn(f"{ctx.slug}: d3 批次 JSON 解析失败(第{attempt + 1}次尝试): {e}")
+    if parsed is None:                          # 重试尽仍坏→本批次回退(上层会补 zh=en 并告警)
+        return {}
     zh_map: dict[int, str] = {}
     for item in parsed.get("items", []):
         try:

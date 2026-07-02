@@ -219,3 +219,45 @@ def test_module_import_does_no_network_at_top_level():
             assert all(a.name.split(".")[0] not in banned for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in banned
+
+
+class _FlakyLLM:
+    """第一次吐残缺 JSON(真跑遇到的 Gemini 抽风),第二次正常。"""
+    def __init__(self, good: str):
+        self.good = good; self.calls = 0
+    def generate(self, system: str, prompt: str) -> str:
+        self.calls += 1
+        return '{"items": [{"id": 0, "zh": "残缺' if self.calls == 1 else self.good
+
+
+def test_batch_retries_on_malformed_json(tmp_path):
+    """LLM 偶发残缺 JSON 不该杀死整条 run——重试后成功。"""
+    import json as _json
+    from src.config import Config
+    from src.context import Ctx
+    from src.util.jobs import write_json, read_json
+    import src.stages.d3_translate as d3
+    good = _json.dumps({"items": [{"id": 0, "zh": "你好"}]})
+    ctx = Ctx(slug="c", config=Config({}), root=tmp_path, llm=_FlakyLLM(good))
+    write_json(ctx.job, d3.INPUT, {"duration": 2, "segments": [
+        {"start": 0, "end": 2, "text": "hi", "gender": "female"}]})
+    d3.run(ctx)
+    out = read_json(ctx.job, d3.OUTPUT)["segments"]
+    assert out[0]["zh"] == "你好"
+    assert any("解析失败" in w for w in ctx.warnings)
+
+
+def test_batch_falls_back_after_3_bad_json(tmp_path):
+    """三次全残缺→本批次回退 zh=en,不抛异常。"""
+    from src.config import Config
+    from src.context import Ctx
+    from src.util.jobs import write_json, read_json
+    from src.llm import FakeLLM
+    import src.stages.d3_translate as d3
+    ctx = Ctx(slug="c", config=Config({}), root=tmp_path,
+              llm=FakeLLM(canned='{"items": [{"id": 0, "zh": "残缺'))
+    write_json(ctx.job, d3.INPUT, {"duration": 2, "segments": [
+        {"start": 0, "end": 2, "text": "hello world"}]})
+    d3.run(ctx)
+    out = read_json(ctx.job, d3.OUTPUT)["segments"]
+    assert out[0]["zh"] == "hello world"          # 回退英文原文
