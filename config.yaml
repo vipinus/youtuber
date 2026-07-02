@@ -2,7 +2,9 @@ cost_tier: free
 pipeline: doc              # original(s1-s9 选题→出片→发布) | doc(P7 d1-d7 整片翻译，现为主产品)
                            # 覆盖：`python -m src.run --pipeline original --case <slug>`
 llm:
-  provider: gemini          # gemini | fake | claude
+  provider: ollama          # ollama(eros云端,无日配额) | gemini(免费20次/天) | fake | claude
+  ollama_host: http://eros:11434
+  ollama_model: gemma4:31b-cloud   # Ollama云端跑,零本地权重;订阅后可换 gemini-3-flash-preview
   gemini_model: gemini-2.5-flash
   script_provider: gemini
 tts:
