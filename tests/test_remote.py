@@ -2,10 +2,11 @@ import ast
 import inspect
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 from src.config import Config
-from src.remote import FakeRemoteGPU, SSHRemoteGPU, get_remote
+from src.remote import FakeRemoteGPU, LocalGPU, SSHRemoteGPU, get_remote
 
 
 # ---------------------------------------------------------------------------
@@ -307,3 +308,160 @@ def test_get_remote_passes_timeout(monkeypatch):
     from src.remote import get_remote, SSHRemoteGPU
     r = get_remote(Config({"remote": {"provider": "ssh", "timeout_sec": 77}}))
     assert isinstance(r, SSHRemoteGPU) and r.timeout_sec == 77
+
+
+# ---------------------------------------------------------------------------
+# LocalGPU (P7 T14) — 管线原生跑在 zion 上：直接 subprocess 经 ~/gpu-py 跑
+# scripts/zion_gpu_asr.py / zion_sdxl.py，不 scp/不 ssh。全程用 monkeypatch
+# 假的 subprocess.run 验证命令编排，绝不触发真实 gpu-py。
+# ---------------------------------------------------------------------------
+
+class _FakeCompleted:
+    def __init__(self, returncode=0, stdout="", stderr=""):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+def test_local_gpu_transcribe_separate_command_shape(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    audio = tmp_path / "narration.wav"
+    audio.write_bytes(b"\x00")
+    out_dir = tmp_path / "out"
+    repo = tmp_path / "repo"
+
+    remote = LocalGPU(wrapper="~/gpu-py", whisper_model="medium.en",
+                      timeout_sec=99, repo_root=repo)
+    result = remote.transcribe_separate(audio, out_dir)
+
+    assert result == {
+        "transcript": out_dir / "transcript.json",
+        "no_vocals": out_dir / "no_vocals.mp3",
+    }
+    assert out_dir.is_dir()
+    assert len(calls) == 1                                # 一条命令，不 scp/不 ssh
+    cmd, kwargs = calls[0]
+    assert cmd[0] == str(Path("~/gpu-py").expanduser())
+    assert cmd[1] == str(repo / "scripts" / "zion_gpu_asr.py")
+    assert cmd[2] == str(audio)
+    assert cmd[3] == str(out_dir)
+    assert cmd[4] == "medium.en"
+    assert kwargs["timeout"] == 99
+
+
+def test_local_gpu_transcribe_separate_creates_out_dir_if_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: _FakeCompleted(returncode=0))
+    audio = tmp_path / "in.wav"
+    audio.write_bytes(b"\x00")
+    out_dir = tmp_path / "nested" / "out"
+    LocalGPU(repo_root=tmp_path / "repo").transcribe_separate(audio, out_dir)
+    assert out_dir.is_dir()
+
+
+def test_local_gpu_generate_image_command_shape(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append((cmd, kwargs))
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    out_path = tmp_path / "thumb_bg.png"
+    repo = tmp_path / "repo"
+    remote = LocalGPU(wrapper="~/gpu-py", timeout_sec=88, repo_root=repo)
+    result = remote.generate_image("a dramatic scene, no text", out_path)
+
+    assert result == out_path
+    assert out_path.parent.is_dir()
+    assert len(calls) == 1
+    cmd, kwargs = calls[0]
+    assert cmd[0] == str(Path("~/gpu-py").expanduser())
+    assert cmd[1] == str(repo / "scripts" / "zion_sdxl.py")
+    assert cmd[2] == "a dramatic scene, no text"           # 无需 shlex.quote（不经 shell）
+    assert cmd[3] == str(out_path)
+    assert kwargs["timeout"] == 88
+
+
+def test_local_gpu_wrapper_expanduser_applied(tmp_path):
+    remote = LocalGPU(wrapper="~/custom-gpu-py", repo_root=tmp_path)
+    assert remote.wrapper == str(Path("~/custom-gpu-py").expanduser())
+    assert "~" not in remote.wrapper
+
+
+def test_local_gpu_default_repo_root_is_running_repo():
+    from src.remote import _REPO_ROOT
+    remote = LocalGPU()
+    assert remote.repo_root == _REPO_ROOT
+
+
+def test_local_gpu_raises_clear_error_on_nonzero_returncode(tmp_path, monkeypatch):
+    def fake_run(cmd, **kw):
+        return _FakeCompleted(returncode=1, stdout="", stderr="CUDA OOM")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    remote = LocalGPU(repo_root=tmp_path)
+    with pytest.raises(RuntimeError, match="local gpu-py 失败"):
+        remote.transcribe_separate(tmp_path / "in.wav", tmp_path / "out")
+
+
+def test_local_gpu_timeout_raises_clear_error(tmp_path, monkeypatch):
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="gpu-py", timeout=k.get("timeout", 1))
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    remote = LocalGPU(repo_root=tmp_path, timeout_sec=5)
+    with pytest.raises(RuntimeError, match="超时"):
+        remote.transcribe_separate(tmp_path / "in.wav", tmp_path / "out")
+
+
+def test_local_gpu_generate_image_timeout_raises_clear_error(tmp_path, monkeypatch):
+    def _boom(*a, **k):
+        raise subprocess.TimeoutExpired(cmd="gpu-py", timeout=k.get("timeout", 1))
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+    remote = LocalGPU(repo_root=tmp_path, timeout_sec=5)
+    with pytest.raises(RuntimeError, match="超时"):
+        remote.generate_image("prompt", tmp_path / "out.png")
+
+
+def test_local_gpu_does_not_scp_or_ssh(tmp_path, monkeypatch):
+    """头号回归风险：LocalGPU 绝不能发起 ssh/scp（那是 SSHRemoteGPU 的事）。"""
+    def fake_run(cmd, **kw):
+        assert cmd[0] not in ("ssh", "scp"), f"LocalGPU 不该发起 {cmd[0]}"
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    remote = LocalGPU(repo_root=tmp_path)
+    remote.transcribe_separate(tmp_path / "in.wav", tmp_path / "out")
+    remote.generate_image("prompt", tmp_path / "bg.png")
+
+
+# ---------------------------------------------------------------------------
+# get_remote 工厂 —— local -> LocalGPU
+# ---------------------------------------------------------------------------
+
+def test_get_remote_local():
+    remote = get_remote(Config({"remote": {"provider": "local"}}))
+    assert isinstance(remote, LocalGPU)
+    assert remote.wrapper == str(Path("~/gpu-py").expanduser())
+    assert remote.whisper_model == "medium.en"
+
+
+def test_get_remote_local_custom_wrapper_and_model():
+    cfg = Config({"remote": {
+        "provider": "local", "wrapper": "~/other-gpu-py",
+        "whisper_model": "large-v3", "timeout_sec": 42,
+    }})
+    remote = get_remote(cfg)
+    assert isinstance(remote, LocalGPU)
+    assert remote.wrapper == str(Path("~/other-gpu-py").expanduser())
+    assert remote.whisper_model == "large-v3"
+    assert remote.timeout_sec == 42

@@ -178,8 +178,12 @@ def _metallic_text_layer(lines: list[str], font, canvas_w: int, canvas_h: int,
         (1, shear, -shear * canvas_h * 0.5, 0, 1, 0), resample=Image.BICUBIC)
 
 
-def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
-    """背景图(或纯色兜底) + 底部渐变 + 大字中文标题(自动缩字号) + 右上角水印面板。"""
+def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path,
+                   font_path: str | None = None) -> None:
+    """背景图(或纯色兜底) + 底部渐变 + 大字中文标题(自动缩字号) + 右上角水印面板。
+
+    font_path：P7 T14 可配置字体(config `paths.title_font`)；不传时用 s8_meta
+    的 TITLE_FONT(笔记本硬编码路径)兜底，保持老调用方/老测试不变。"""
     W, H = 1280, 720
     img = None
     if bg and Path(bg).exists() and Path(bg).stat().st_size > 0:
@@ -201,7 +205,7 @@ def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
     img = Image.alpha_composite(img, shadow)
 
     lines = _wrap_title(title)                        # 长标题折两行，不丢字
-    font = _fit(TITLE_FONT, max(lines, key=len), int(W * 0.86), start=100, lo=40)
+    font = _fit(font_path or TITLE_FONT, max(lines, key=len), int(W * 0.86), start=100, lo=40)
     lh = font.size + 14
     y0 = H - 92 - lh * (len(lines) - 1)               # 多行整体贴底部
     img.alpha_composite(_metallic_text_layer(lines, font, W, H, y0, lh))
@@ -243,7 +247,8 @@ def run(ctx: Ctx) -> None:
 
     title = meta.get("title") or source.get("title") or "未解之谜"
     watermark = Path(ctx.config.get("p7.watermark", DEFAULT_WATERMARK))
-    make_thumbnail(ctx.job / "thumb.jpg", title, bg_path, watermark)
+    font_path = ctx.config.get("paths.title_font", TITLE_FONT)
+    make_thumbnail(ctx.job / "thumb.jpg", title, bg_path, watermark, font_path=font_path)
 
     write_json(ctx.job, OUTPUT, {
         "title": title,

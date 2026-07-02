@@ -1,0 +1,73 @@
+# P7 T14：管线原生跑在 GPU 主机 zion 上时用这份 config（不再是笔记本 ssh 过去）。
+# 用法：~/pipe-venv/bin/python -m src.run --case <slug> --config config-zion.yaml
+#
+# 跟 config.yaml 的差异只有四处（其余 gemini/edge/archive/youtube/private/
+# playlist 等全部照抄 config.yaml，保持行为一致）：
+#   1. remote.provider: local（不再 ssh/scp 自己，直接本机跑 scripts/zion_gpu_asr.py /
+#      zion_sdxl.py），remote.wrapper: ~/gpu-py。
+#   2. p7.encoder: nvenc（GPU 硬件编码，ffmpeg h264_nvenc）。
+#   3. paths.title_font: 指向 zion 上实际装的 CJK 字体文件路径。
+#   4. archive.dir 沿用 config.yaml 里已经就是 zion NFS 挂载点的默认值。
+cost_tier: free
+pipeline: doc              # original(s1-s9 选题→出片→发布) | doc(P7 d1-d7 整片翻译，现为主产品)
+                           # 覆盖：`python -m src.run --pipeline original --case <slug>`
+llm:
+  provider: gemini          # gemini | fake | claude
+  gemini_model: gemini-2.5-flash
+  script_provider: gemini
+tts:
+  provider: edge            # edge | fake
+  voice: zh-CN-YunyangNeural       # 默认男声旁白；段 gender=="male"/null/缺失都落它(不确定不瞎猜)
+  voice_female: zh-CN-XiaoxiaoNeural  # P7 T9 性别匹配配音：段 gender=="female" 时用它(修用户反馈的女声画面配男声)
+  rate: "+0%"               # 正常语速(用户定)。慢速会让配音溢出时间槽(d7有atempo防撞兜底)
+media:
+  provider: archive         # archive(archive.org PD影片,动态贴题) | nasa(静图) | fake
+subs:
+  max_chars: 20            # 字幕单条软上限：句末标点必断、次级标点够长才断、不拦腰断词
+youtube:
+  provider: youtube        # youtube | fake
+  client_secret: secrets/client_secret.json
+  token: secrets/token.json
+remote:
+  provider: local           # P7 T14：zion 上原生跑管线，本机直接 subprocess 经 wrapper 跑 GPU 脚本，不 ssh/scp
+  wrapper: ~/gpu-py         # 先设好 LD_LIBRARY_PATH 再 exec ~/asr-venv/bin/python 的 wrapper(必须经它调用)
+  whisper_model: medium.en # 样片档(GPU faster-whisper);production 可切 large-v3
+  timeout_sec: 1200        # GPU 任务卡死时中止管线而非无限挂起
+video:
+  resolution: 1080p
+  fps: 30
+guardrails:
+  min_documented_facts: 3
+  allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
+p7:                        # P7 整片翻译管线：d1_source 选片参数(首题材 太空/NASA)
+  query: "apollo OR spacecraft OR astronaut OR mars OR moon OR planet OR telescope OR space exploration"
+  min_sec: 300              # 5min 下限：太短不算"整片纪录片"
+  max_sec: 1800             # 30min 上限：MVP 限时长，控制转录/下载耗时
+  max_bytes: 500000000      # ~500MB 单文件上限：整片要清晰但不下单片吃满带宽/磁盘的母版
+  collections:               # 首题材=太空：只在 NASA 集合里选，既贴题又产权最干净。
+    - nasa                   # 换题材时改这里(可用可信集合见 src/media._ARCHIVE_SEARCH_COLLECTIONS)
+  bg_gain: 0.5              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
+  bgm: replace              # d7_assemble 背景床来源：replace(默认，免版税) | original(demucs no_vocals)
+                             # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
+                             # 配乐，demucs 去人声后原样保留在 no_vocals 背景床里，触发 4 条 YouTube
+                             # Content ID 版权认领(不下架但拦变现)。replace 换成 assets/bgm 下的
+                             # CC-BY 免版税曲目，从源头消掉认领风险。
+  bgm_dir: assets/bgm       # replace 模式的曲目池目录(须含 bgm.json 清单)；缺失/清单空 → 自动回退
+                             # original，只告警不中止 run
+  watermark: assets/watermark_tr.png  # d8_meta：缩略图右上角频道水印(透明底 PNG)
+  encoder: nvenc            # P7 T14：zion 有 RTX 3070 Ti，用 GPU 硬编(h264_nvenc -preset p5 -cq 23)
+                             # 比 CPU libx264 快得多；失败(驱动没装对/显存被占)自动回退 libx264 重试一次，
+                             # 不会丢片子。encoder_lib_path 留默认 /run/opengl-driver/lib(NixOS 驱动库路径)。
+publish:
+  auto_upload: true         # 全自动上传 YouTube（用户要求）
+  visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
+  playlist: "太空探索/NASA"  # 上传成功后自动加入的播放列表标题（找不到就新建）；换题材改这里；留空则不入列
+archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
+  dir: "~/nas/Share/youtuber" # 归档根目录(zion 上 NFS 自动挂载 tatara 的写入点)；`~` 会展开成当前用户家目录。
+                             # 目录不存在/不可写 → 只告警+落 status:unreachable，不中止 run
+  trim_local: true          # 归档校验(逐文件核对存在+大小)通过后删本地大媒体文件，*.json/*.ass/thumb.jpg 留本地当台账
+paths:
+  jobs_root: jobs
+  seeds: seeds/cases.yaml
+  fallback_image: assets/fallback.jpg
+  title_font: /home/fabric/.local/share/fonts/NotoSansCJK-Black.ttc  # P7 T14：zion 上装的 CJK 字体(fontconfig 名 "Noto Sans CJK SC"，Pillow 要给 FILE 路径)

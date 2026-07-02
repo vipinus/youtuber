@@ -27,3 +27,27 @@ def test_load_config(tmp_path):
     (tmp_path / "config.yaml").write_text("llm:\n  provider: fake\n", encoding="utf-8")
     cfg = load_config(tmp_path / "config.yaml")
     assert cfg.get("llm.provider") == "fake"
+
+
+# ---------------------------------------------------------------------------
+# P7 T14：config-zion.yaml —— zion 原生跑管线的专用 config，须能 yaml.safe_load
+# 且 5 个 zion 专属键正确（跟 config.yaml 的差异点）。
+# ---------------------------------------------------------------------------
+
+def test_config_zion_yaml_parses_and_has_zion_keys():
+    import yaml
+    from pathlib import Path
+
+    data = yaml.safe_load(Path("config-zion.yaml").read_text(encoding="utf-8"))
+
+    assert data["remote"]["provider"] == "local"
+    assert data["remote"]["wrapper"] == "~/gpu-py"
+    assert data["p7"]["encoder"] == "nvenc"
+    assert data["paths"]["title_font"] == "/home/fabric/.local/share/fonts/NotoSansCJK-Black.ttc"
+    assert data["archive"]["dir"] == "~/nas/Share/youtuber"
+
+
+def test_config_zion_yaml_loadable_via_load_config():
+    cfg = load_config("config-zion.yaml")
+    assert cfg.get("remote.provider") == "local"
+    assert cfg.get("p7.encoder") == "nvenc"

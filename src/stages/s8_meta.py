@@ -50,7 +50,9 @@ def _fit(path: str, text: str, max_w: int, start: int = 90, lo: int = 40):
     return _font(path, lo)
 
 
-def make_thumbnail(dest: Path, title: str, bg: Path) -> None:
+def make_thumbnail(dest: Path, title: str, bg: Path, font_path: str | None = None) -> None:
+    """font_path：P7 T14 可配置字体(config `paths.title_font`)；不传时用
+    模块级 TITLE_FONT(笔记本硬编码路径)兜底，保持老调用方/老测试不变。"""
     W, H = 1280, 720
     img = None
     if bg.exists() and bg.stat().st_size > 0:
@@ -64,7 +66,7 @@ def make_thumbnail(dest: Path, title: str, bg: Path) -> None:
     img = Image.alpha_composite(img.convert("RGBA"), ov).convert("RGB")
     d = ImageDraw.Draw(img)
     line = title if len(title) <= 9 else title[:9]
-    font = _fit(TITLE_FONT, line, int(W * 0.86))
+    font = _fit(font_path or TITLE_FONT, line, int(W * 0.86))
     d.text((W // 2, H // 2), line, font=font, fill=(255, 255, 255),
            anchor="mm", stroke_width=6, stroke_fill=(8, 12, 30))
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -82,5 +84,7 @@ def run(ctx: Ctx) -> None:
     if attrib:
         meta["description"] = meta.get("description", "") + "\n\n素材来源：" + "；".join(attrib)
     title = meta.get("title") or (script.get("title_options") or ["未解之谜"])[0]
-    make_thumbnail(ctx.job / "thumb.jpg", title, ctx.job / "media" / "seg_001.jpg")
+    font_path = ctx.config.get("paths.title_font", TITLE_FONT)
+    make_thumbnail(ctx.job / "thumb.jpg", title, ctx.job / "media" / "seg_001.jpg",
+                    font_path=font_path)
     write_json(ctx.job, OUTPUT, meta)

@@ -189,6 +189,66 @@ def test_make_thumbnail_long_title_does_not_crash(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P7 T14：可配置字体路径(config `paths.title_font`)
+# ---------------------------------------------------------------------------
+
+def test_make_thumbnail_survives_configured_missing_font(tmp_path):
+    """font_path 参数指向一个不存在的路径(配置错了/换机器没装)时用兜底字体，不崩。"""
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1280, 720), (20, 20, 40)).save(bg)
+    dest = tmp_path / "thumb.jpg"
+    make_thumbnail(dest, "太空探索", bg, tmp_path / "nonexistent_watermark.png",
+                    font_path="/nonexistent/configured.ttc")
+    assert dest.exists() and Image.open(dest).size == (1280, 720)
+
+
+def test_make_thumbnail_font_path_none_falls_back_to_title_font_constant(tmp_path):
+    """不传 font_path(老调用方)要用模块级 TITLE_FONT 兜底，行为跟改造前一致。"""
+    import src.stages.d8_meta as d8
+    bg = tmp_path / "bg.png"
+    Image.new("RGB", (1280, 720), (20, 20, 40)).save(bg)
+    dest = tmp_path / "thumb.jpg"
+    make_thumbnail(dest, "太空探索", bg, None, font_path=None)
+    assert dest.exists() and Image.open(dest).size == (1280, 720)
+
+
+def test_run_threads_configured_title_font_into_make_thumbnail(tmp_path, monkeypatch):
+    """ctx.config 的 paths.title_font 要真的传给 make_thumbnail，而不是被忽略。"""
+    import src.stages.d8_meta as d8
+
+    captured = {}
+
+    def fake_make_thumbnail(dest, title, bg, watermark, font_path=None):
+        captured["font_path"] = font_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1280, 720)).save(dest, "JPEG")
+
+    monkeypatch.setattr(d8, "make_thumbnail", fake_make_thumbnail)
+
+    ctx = _ctx(tmp_path, _CANNED, cfg_extra={"paths": {"title_font": "/custom/configured-font.ttc"}})
+    run(ctx)
+    assert captured["font_path"] == "/custom/configured-font.ttc"
+
+
+def test_run_defaults_font_to_title_font_constant_when_unconfigured(tmp_path, monkeypatch):
+    """没配 paths.title_font 时回退 s8_meta.TITLE_FONT 常量，不是 None。"""
+    import src.stages.d8_meta as d8
+
+    captured = {}
+
+    def fake_make_thumbnail(dest, title, bg, watermark, font_path=None):
+        captured["font_path"] = font_path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (1280, 720)).save(dest, "JPEG")
+
+    monkeypatch.setattr(d8, "make_thumbnail", fake_make_thumbnail)
+
+    ctx = _ctx(tmp_path, _CANNED)                          # 没有 paths.title_font
+    run(ctx)
+    assert captured["font_path"] == d8.TITLE_FONT
+
+
+# ---------------------------------------------------------------------------
 # import 时不触网
 # ---------------------------------------------------------------------------
 

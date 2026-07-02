@@ -16,6 +16,7 @@ import src.stages.d7_assemble as d7
 from src.stages.d7_assemble import (
     BACKGROUND,
     BGM_MANIFEST,
+    DEFAULT_ENCODER_LIB_PATH,
     JOB_BGM,
     NARRATION,
     NARRATION_TRACK,
@@ -25,6 +26,7 @@ from src.stages.d7_assemble import (
     build_assemble_cmd,
     build_narration_cmd,
     build_narration_filter,
+    nvenc_env,
     pick_bgm_track,
     run,
 )
@@ -158,6 +160,173 @@ def test_build_assemble_cmd_bg_gain_knob_applied(tmp_path):
     cmd = build_assemble_cmd(source, bg, nar, subs, out, bg_gain=0.25)
     fc = cmd[cmd.index("-filter_complex") + 1]
     assert "volume=0.25" in fc
+
+
+# ---------------------------------------------------------------------------
+# build_assemble_cmd — P7 T14 encoder 开关 (libx264 默认 | nvenc)
+# ---------------------------------------------------------------------------
+
+def test_build_assemble_cmd_default_encoder_is_libx264(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5)
+    assert "-c:v" in cmd
+    assert cmd[cmd.index("-c:v") + 1] == "libx264"
+    assert "h264_nvenc" not in cmd
+
+
+def test_build_assemble_cmd_nvenc_encoder_wires_preset_and_cq(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5, encoder="nvenc")
+    assert "libx264" not in cmd
+    i = cmd.index("-c:v")
+    assert cmd[i:i + 6] == ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"]
+    # 依旧保留通用编码参数
+    assert "-pix_fmt" in cmd and cmd[cmd.index("-pix_fmt") + 1] == "yuv420p"
+    assert "-c:a" in cmd and cmd[cmd.index("-c:a") + 1] == "aac"
+
+
+def test_build_assemble_cmd_nvenc_still_wires_narration_and_subs(tmp_path):
+    """encoder 开关只改编码器参数，不该动 filter_complex/字幕/旁白编排逻辑。"""
+    source, bg, nar, subs, out = (
+        tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / NARRATION_TRACK,
+        tmp_path / SUBS, tmp_path / OUTPUT,
+    )
+    cmd = build_assemble_cmd(source, bg, nar, subs, out, bg_gain=0.5, encoder="nvenc")
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "sidechaincompress" in fc
+    assert "subtitles=" in fc
+
+
+# ---------------------------------------------------------------------------
+# nvenc_env — LD_LIBRARY_PATH 合并(prepend，不替换)
+# ---------------------------------------------------------------------------
+
+def test_nvenc_env_prepends_lib_path_and_preserves_existing_env():
+    cfg = Config({"p7": {"encoder_lib_path": "/custom/lib"}})
+    base = {"PATH": "/usr/bin", "LD_LIBRARY_PATH": "/other/lib", "HOME": "/home/x"}
+    env = nvenc_env(cfg, base_env=base)
+    assert env["LD_LIBRARY_PATH"] == "/custom/lib:/other/lib"
+    assert env["PATH"] == "/usr/bin"                      # 其它变量原样保留
+    assert env["HOME"] == "/home/x"
+    assert base["LD_LIBRARY_PATH"] == "/other/lib"        # 不修改传入的 base_env 原字典
+
+
+def test_nvenc_env_default_lib_path_when_no_config_override():
+    cfg = Config({})
+    env = nvenc_env(cfg, base_env={"PATH": "/usr/bin"})
+    assert env["LD_LIBRARY_PATH"] == DEFAULT_ENCODER_LIB_PATH
+
+
+def test_nvenc_env_no_existing_ld_library_path_uses_lib_path_alone():
+    cfg = Config({"p7": {"encoder_lib_path": "/run/opengl-driver/lib"}})
+    env = nvenc_env(cfg, base_env={"PATH": "/usr/bin"})    # 没有既有 LD_LIBRARY_PATH
+    assert env["LD_LIBRARY_PATH"] == "/run/opengl-driver/lib"
+
+
+def test_nvenc_env_defaults_to_os_environ_when_base_env_omitted(monkeypatch):
+    monkeypatch.setenv("SOME_MARKER_VAR", "present")
+    cfg = Config({})
+    env = nvenc_env(cfg)
+    assert env["SOME_MARKER_VAR"] == "present"            # 真的合并了 os.environ
+
+
+# ---------------------------------------------------------------------------
+# run() —— p7.encoder=nvenc：env 透传 + 失败回退 libx264(never lose the render)
+# ---------------------------------------------------------------------------
+
+def test_run_nvenc_encoder_passes_env_with_ld_library_path(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, {"p7": {"encoder": "nvenc"}})
+    _minimal_job(ctx)
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)
+
+    assert len(calls) == 1                                # 无旁白，只有 pass②
+    cmd, kw = calls[0]
+    assert "h264_nvenc" in cmd
+    assert kw.get("env") is not None
+    assert DEFAULT_ENCODER_LIB_PATH in kw["env"]["LD_LIBRARY_PATH"]
+    assert not any("nvenc" in w for w in ctx.warnings)      # 成功一次过，没有 nvenc 相关告警
+
+
+def test_run_default_encoder_passes_no_special_env(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path)                                  # 默认 libx264
+    _minimal_job(ctx)
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append((cmd, kw))
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)
+
+    cmd, kw = calls[0]
+    assert "libx264" in cmd
+    assert kw.get("env") is None
+
+
+def test_run_nvenc_falls_back_to_libx264_on_failure_and_warns(tmp_path, monkeypatch):
+    """nvenc 挂了(驱动/显存问题)不该丢了这条片子——warn 后回退 libx264 重试一次并成功。"""
+    ctx = _ctx(tmp_path, {"p7": {"encoder": "nvenc"}})
+    _minimal_job(ctx)
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        if "h264_nvenc" in cmd:
+            class R:
+                returncode = 1
+                stderr = "Cannot load libnvidia-encode.so.1"
+                stdout = ""
+            return R()
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R2:
+            returncode = 0
+            stderr = ""
+        return R2()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)                                              # 不应抛异常
+
+    assert len(calls) == 2                                # nvenc 失败 + libx264 重试
+    assert "h264_nvenc" in calls[0]
+    assert "libx264" in calls[1]
+    assert (ctx.job / OUTPUT).exists()                    # 片子最终还是出了
+    assert any("nvenc" in w and "回退" in w for w in ctx.warnings)
+
+
+def test_run_nvenc_raises_when_both_nvenc_and_fallback_fail(tmp_path, monkeypatch):
+    ctx = _ctx(tmp_path, {"p7": {"encoder": "nvenc"}})
+    _minimal_job(ctx)
+
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 1
+            stderr = "boom"
+            stdout = ""
+        return R()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError):
+        run(ctx)
+    assert any("nvenc" in w and "回退" in w for w in ctx.warnings)
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,14 @@ scripts/zion_sdxl.py 到 zion、经 `~/gpu-py` 跑 Stable Diffusion XL、scp 一
 （见计划文档 SDXL 配方：`enable_model_cpu_offload`+`enable_vae_slicing` 撑住
 8GB 显存，28 步 ~12s）。prompt 里必须带 "no text"——中文标题/水印由本地
 d8_meta 用 Pillow 后期叠加，不指望 SDXL 出中文字。
+
+P7 T14（最终迁移）追加了 `LocalGPU`：管线本身也部署到 zion 上原生跑（不再是
+笔记本 ssh 过去），这种模式下 zion 既是控制端又是 GPU 端，SSHRemoteGPU 的
+scp/ssh 编排变成纯浪费（同机器多此一举地走网络栈）——`LocalGPU` 直接用
+subprocess 在本机（此时就是 zion）经 `~/gpu-py` 跑 scripts/zion_gpu_asr.py /
+zion_sdxl.py，脚本读写的 out_dir/out_path 就是最终产物落点，不需要再 scp 拉回。
+`remote.provider: local` 选它（见 config-zion.yaml）；笔记本模式（`ssh`）完全
+不受影响，两套并存。
 """
 from __future__ import annotations
 
@@ -28,6 +36,29 @@ from src.config import Config
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ZION_SCRIPT_NAME = "zion_gpu_asr.py"
 _ZION_SDXL_SCRIPT_NAME = "zion_sdxl.py"
+
+
+def _run_checked(
+    cmd: list[str], timeout_sec: int, timeout_msg: str, fail_msg_prefix: str,
+    env: dict | None = None,
+) -> subprocess.CompletedProcess:
+    """跑一条子进程命令：超时/非零 returncode 都抛清晰 RuntimeError（含
+    stdout/stderr），不吞异常、不无限挂起。ssh/scp（SSHRemoteGPU）和本机
+    gpu-py 编排（LocalGPU）共用同一套超时+报错语义，只是各自的错误文案
+    前缀不同（调用方传 timeout_msg/fail_msg_prefix）。"""
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout_sec, env=env,
+        )
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(timeout_msg) from e
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"{fail_msg_prefix}\n"
+            f"[returncode={result.returncode}] stdout={result.stdout!r} "
+            f"stderr={result.stderr!r}"
+        )
+    return result
 
 
 class RemoteGPU(Protocol):
@@ -117,38 +148,22 @@ class SSHRemoteGPU:
     # -- 底层 ssh/scp 封装：失败时报清晰错误（含命令 + stderr），不吞异常 --
 
     def _ssh(self, remote_cmd: str) -> str:
-        try:
-            result = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd],
-                capture_output=True, text=True, timeout=self.timeout_sec,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(
+        result = _run_checked(
+            ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd], self.timeout_sec,
+            timeout_msg=(
                 f"ssh 超时 {self.timeout_sec}s (host={self.host}): {remote_cmd!r} "
                 f"—— zion 可能掉线/卡死，管线中止而非无限挂起"
-            ) from e
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"ssh 失败 (host={self.host}): {remote_cmd!r}\n"
-                f"[returncode={result.returncode}] stdout={result.stdout!r} "
-                f"stderr={result.stderr!r}"
-            )
+            ),
+            fail_msg_prefix=f"ssh 失败 (host={self.host}): {remote_cmd!r}",
+        )
         return result.stdout
 
     def _scp(self, src: str, dst: str) -> None:
-        try:
-            result = subprocess.run(
-                ["scp", "-o", "BatchMode=yes", src, dst],
-                capture_output=True, text=True, timeout=self.timeout_sec,
-            )
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError(f"scp 超时 {self.timeout_sec}s: {src} -> {dst}") from e
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"scp 失败: {src} -> {dst}\n"
-                f"[returncode={result.returncode}] stdout={result.stdout!r} "
-                f"stderr={result.stderr!r}"
-            )
+        _run_checked(
+            ["scp", "-o", "BatchMode=yes", src, dst], self.timeout_sec,
+            timeout_msg=f"scp 超时 {self.timeout_sec}s: {src} -> {dst}",
+            fail_msg_prefix=f"scp 失败: {src} -> {dst}",
+        )
 
     def _deploy_script(self, script_name: str | None = None) -> str:
         """确保脚本存在于 zion 的 workdir（每次都重新推送，保证跑的是本地最新
@@ -196,6 +211,61 @@ class SSHRemoteGPU:
         return out_path
 
 
+class LocalGPU:
+    """P7 T14：管线本身就跑在 zion 上时用它——同一台机器既是控制端又是 GPU
+    端，SSHRemoteGPU 那套 scp 上传/ssh 触发/scp 拉回完全是多余的网络往返。
+    LocalGPU 直接用 subprocess 在本机经 `~/gpu-py` 跑
+    scripts/zion_gpu_asr.py / zion_sdxl.py：脚本的 out_dir/out_path 参数就是
+    最终产物落点（同一份文件系统），跑完直接读，不需要再搬一次。
+
+    协议（transcribe_separate/generate_image 的输入输出契约）跟 SSHRemoteGPU
+    完全一致，因此上游 d2_gpu/d8_meta 不用感知走的是 local 还是 ssh。
+    """
+
+    def __init__(
+        self,
+        wrapper: str = "~/gpu-py",
+        whisper_model: str = "medium.en",
+        timeout_sec: int = 1200,
+        repo_root: Path | None = None,
+    ):
+        self.wrapper = str(Path(wrapper).expanduser())
+        self.whisper_model = whisper_model
+        self.timeout_sec = timeout_sec        # 同 SSHRemoteGPU：GPU 任务卡死不能无限挂住管线
+        self.repo_root = Path(repo_root) if repo_root is not None else _REPO_ROOT
+
+    def transcribe_separate(self, audio: Path, out_dir: Path) -> dict:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        script = self.repo_root / "scripts" / _ZION_SCRIPT_NAME
+        cmd = [self.wrapper, str(script), str(audio), str(out_dir), self.whisper_model]
+        _run_checked(
+            cmd, self.timeout_sec,
+            timeout_msg=(
+                f"local gpu-py 超时 {self.timeout_sec}s: {cmd!r} "
+                f"—— GPU 任务卡死，管线中止而非无限挂起"
+            ),
+            fail_msg_prefix=f"local gpu-py 失败: {cmd!r}",
+        )
+        return {
+            "transcript": out_dir / "transcript.json",
+            "no_vocals": out_dir / "no_vocals.mp3",
+        }
+
+    def generate_image(self, prompt: str, out_path: Path) -> Path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        script = self.repo_root / "scripts" / _ZION_SDXL_SCRIPT_NAME
+        cmd = [self.wrapper, str(script), prompt, str(out_path)]
+        _run_checked(
+            cmd, self.timeout_sec,
+            timeout_msg=(
+                f"local gpu-py 超时 {self.timeout_sec}s: {cmd!r} "
+                f"—— GPU 任务卡死，管线中止而非无限挂起"
+            ),
+            fail_msg_prefix=f"local gpu-py 失败: {cmd!r}",
+        )
+        return out_path
+
+
 def get_remote(config: Config) -> RemoteGPU:
     provider = config.get("remote.provider", "ssh")
     if provider == "fake":
@@ -204,6 +274,12 @@ def get_remote(config: Config) -> RemoteGPU:
         return SSHRemoteGPU(
             host=config.get("remote.host", "fabric@zion"),
             workdir=config.get("remote.workdir", "~/p7-work"),
+            whisper_model=config.get("remote.whisper_model", "medium.en"),
+            timeout_sec=config.get("remote.timeout_sec", 1200),
+        )
+    if provider == "local":
+        return LocalGPU(
+            wrapper=config.get("remote.wrapper", "~/gpu-py"),
             whisper_model=config.get("remote.whisper_model", "medium.en"),
             timeout_sec=config.get("remote.timeout_sec", 1200),
         )

@@ -58,3 +58,4 @@ paths:
   jobs_root: jobs
   seeds: seeds/cases.yaml
   fallback_image: assets/fallback.jpg
+  title_font: /usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc  # s8/d8 缩略图标题字体；zion 上换成 config-zion.yaml 里的路径

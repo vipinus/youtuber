@@ -15,6 +15,14 @@ video.mp4。扩展 s7_assemble，思路取自已跑通的
 背景(压 bg_gain，无旁白可 duck)+字幕合成，warn 不中断——保证任何 job 都能
 出片。
 
+P7 T14：`p7.encoder` 编码器开关(默认 `libx264`，笔记本上没有 NVENC)。zion
+原生跑管线时设成 `nvenc`（见 config-zion.yaml），第②遍改用
+`h264_nvenc -preset p5 -cq 23`——ffmpeg 的 nvenc 编码器要读
+`/run/opengl-driver/lib` 下 NixOS 的 NVIDIA 驱动库(已在 zion 上验证)，走
+`p7.encoder_lib_path` PREPEND 进 `LD_LIBRARY_PATH`(合并 os.environ，不替换)。
+nvenc 编码失败(如驱动没装对/显存被占)不该丢了这条片子——warn 后自动回退
+libx264 重试一次，绝不因为 GPU 编码挂了就把整段渲染报废。
+
 背景床来源(`p7.bgm`，默认 replace)：真跑首次上传发现 NASA 公有领域片里常内嵌
 片方外购的商业库背景乐，demucs 的 no_vocals 背景床把它原样保留，触发了 4 条
 YouTube Content ID 版权认领(不下架但拦变现)。replace 模式改用
@@ -27,11 +35,13 @@ d8_meta 追加 CC-BY 署名。曲目清单/目录缺失或清单为空 → warn 
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import zlib
 from pathlib import Path
 from typing import Callable
 
+from src.config import Config
 from src.context import Ctx
 from src.util.ffprobe import duration_sec
 from src.util.jobs import exists, read_json, write_json
@@ -45,6 +55,7 @@ NARRATION_TRACK = "narration.wav"          # 中间产物：第①遍拼好的�
 BGM_MANIFEST = "bgm.json"                  # p7.bgm_dir 下的曲目清单文件名
 JOB_BGM = "bgm.json"                       # job 目录：记录本次选中曲目(供 d8 署名)
 DEFAULT_BGM_DIR = "assets/bgm"
+DEFAULT_ENCODER_LIB_PATH = "/run/opengl-driver/lib"    # NVENC 需要的 NixOS NVIDIA 驱动库路径(zion 已验证)
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
@@ -131,14 +142,18 @@ def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None]) -> dic
 
 def build_assemble_cmd(
     source: Path, bg: Path, narration: Path | None, subs: Path, out_path: Path, bg_gain: float,
-    bg_input_opts: list[str] | None = None,
+    bg_input_opts: list[str] | None = None, encoder: str = "libx264",
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
     再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
 
     bg_input_opts：背景输入的额外 ffmpeg input 选项(如 replace 模式的
     `-stream_loop -1 -t {video_dur}` 循环铺满源片时长)，插在背景的 `-i` 之前；
-    original 模式(bg=no_vocals.mp3，天然与源片等长)不需要，传 None/空列表。"""
+    original 模式(bg=no_vocals.mp3，天然与源片等长)不需要，传 None/空列表。
+
+    encoder：`libx264`(默认，笔记本兼容) | `nvenc`(zion 原生跑时用 GPU 编码，
+    见 `p7.encoder`)——nvenc 跑失败时调用方(run())负责 warn + 回退 libx264 重试，
+    这里只管拼命令，不做失败判断。"""
     subs_esc = str(subs).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
     cmd = ["ffmpeg", "-y", "-i", str(source)] + list(bg_input_opts or []) + ["-i", str(bg)]
     if narration is not None:
@@ -154,13 +169,30 @@ def build_assemble_cmd(
             f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout];"
             f"[0:v]subtitles='{subs_esc}'[vout]"
         )
+    video_codec_args = (
+        ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"] if encoder == "nvenc"
+        else ["-c:v", "libx264"]
+    )
     cmd += [
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac",
+        *video_codec_args, "-pix_fmt", "yuv420p", "-c:a", "aac",
         "-shortest", str(out_path),
     ]
     return cmd
+
+
+def nvenc_env(config: Config, base_env: dict | None = None) -> dict:
+    """nvenc 编码要 `/run/opengl-driver/lib` 里的 NixOS NVIDIA 驱动库(zion 上
+    验证过)，PREPEND 进 `LD_LIBRARY_PATH`——合并进 base_env(默认 os.environ)，
+    不是替换：保留调用方环境里原有的其它变量/已有的 LD_LIBRARY_PATH 路径，
+    传给 subprocess.run(env=...)。base_env 参数主要供单测注入固定环境，不依赖
+    真实 os.environ 的当前状态。"""
+    lib_path = config.get("p7.encoder_lib_path", DEFAULT_ENCODER_LIB_PATH)
+    env = dict(base_env if base_env is not None else os.environ)
+    existing = env.get("LD_LIBRARY_PATH", "")
+    env["LD_LIBRARY_PATH"] = f"{lib_path}:{existing}" if existing else lib_path
+    return env
 
 
 def run(ctx: Ctx) -> None:
@@ -207,8 +239,19 @@ def run(ctx: Ctx) -> None:
     else:
         ctx.warn(f"{ctx.slug}: d7_assemble 无旁白段(narration.json 缺失或为空)，仅用背景+字幕合成")
 
-    cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain, bg_input_opts)
-    proc2 = subprocess.run(cmd2, capture_output=True, text=True)
+    encoder = ctx.config.get("p7.encoder", "libx264")
+    cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
+                               bg_input_opts, encoder=encoder)
+    env2 = nvenc_env(ctx.config) if encoder == "nvenc" else None
+    proc2 = subprocess.run(cmd2, capture_output=True, text=True, env=env2)
+    if proc2.returncode != 0 and encoder == "nvenc":
+        # nvenc 挂了(驱动/显存/环境问题)不该丢了这条片子——warn 后回退 libx264 重试一次，
+        # never lose the render。
+        ctx.warn(f"{ctx.slug}: d7 nvenc 编码失败(exit {proc2.returncode})，回退 libx264 重试一次: "
+                 f"{(proc2.stderr or '')[-500:]}")
+        cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
+                                   bg_input_opts, encoder="libx264")
+        proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(
             f"ffmpeg 合成失败 (exit {proc2.returncode}):\n{(proc2.stderr or '')[-2000:]}"
