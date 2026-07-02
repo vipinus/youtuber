@@ -93,6 +93,22 @@ def _panel_with_watermark(watermark: Image.Image, target_w: int = 170, pad: int 
     return panel
 
 
+def _wrap_title(title: str, max_per_line: int = 13) -> list[str]:
+    """短标题单行；长标题折成两行(不再硬截断丢字)——优先在中点附近的标点后断，
+    否则按中点断。最多两行。"""
+    title = title.strip()
+    if len(title) <= max_per_line:
+        return [title]
+    puncts = "：:！!？?，,、；;·"
+    mid = len(title) // 2
+    best = None
+    for i, ch in enumerate(title[:-1]):
+        if ch in puncts and (best is None or abs(i - mid) < abs(best - mid)):
+            best = i
+    cut = (best + 1) if best is not None else mid
+    return [title[:cut].strip(), title[cut:].strip()]
+
+
 def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
     """背景图(或纯色兜底) + 底部渐变 + 大字中文标题(自动缩字号) + 右上角水印面板。"""
     W, H = 1280, 720
@@ -116,10 +132,13 @@ def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
     img = Image.alpha_composite(img, shadow)
 
     d = ImageDraw.Draw(img)
-    line = title if len(title) <= 14 else title[:14]
-    font = _fit(TITLE_FONT, line, int(W * 0.90), start=100, lo=36)
-    d.text((W // 2, H - 90), line, font=font, fill=(255, 255, 255),
-            anchor="mm", stroke_width=6, stroke_fill=(8, 12, 26))
+    lines = _wrap_title(title)                        # 长标题折两行，不丢字
+    font = _fit(TITLE_FONT, max(lines, key=len), int(W * 0.90), start=100, lo=40)
+    lh = font.size + 12
+    y0 = H - 88 - lh * (len(lines) - 1)               # 多行整体贴底部
+    for i, ln in enumerate(lines):
+        d.text((W // 2, y0 + i * lh), ln, font=font, fill=(255, 255, 255),
+               anchor="mm", stroke_width=6, stroke_fill=(8, 12, 26))
 
     if watermark and Path(watermark).exists():
         try:

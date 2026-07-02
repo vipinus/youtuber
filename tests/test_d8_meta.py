@@ -169,3 +169,14 @@ def test_import_does_no_network():
             assert all(a.name.split(".")[0] not in banned for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in banned
+
+
+def test_wrap_title_splits_long_title_no_truncation():
+    """长标题折两行不丢字(真跑发现 title[:14] 硬截断切掉了后半句)。"""
+    from src.stages.d8_meta import _wrap_title
+    t = "地球巨眼！阿雷西博望远镜：窥探宇宙奥秘的奇迹"
+    lines = _wrap_title(t)
+    assert len(lines) == 2
+    assert "".join(lines) == t                      # 不丢一个字
+    assert lines[0].endswith("：")                   # 在标点处断
+    assert _wrap_title("短标题") == ["短标题"]        # 短标题单行
