@@ -106,7 +106,8 @@ def _resolution_of(f: dict) -> str:
 
 
 def _pick_video_file(
-    files: list[dict], min_sec: float, max_sec: float, max_bytes: int
+    files: list[dict], min_sec: float, max_sec: float, max_bytes: int,
+    min_height: int = 0,
 ) -> tuple[dict, float] | None:
     """整片要清晰：mp4 优先，按分辨率(退化到体积)从高到低尝试；超过 max_bytes 的
     直接跳过尝试下一档而非拒绝整条 item(常见：附带体积超大的母版文件旁边有合适的
@@ -117,6 +118,12 @@ def _pick_video_file(
 
     ranked = sorted(mp4s, key=lambda f: (_pixels(f), _size_of(f)), reverse=True)
     for f in ranked:
+        try:
+            h = int(f.get("height") or 0)
+        except (TypeError, ValueError):
+            h = 0
+        if min_height and h < min_height:      # 画质门(p7.min_height):zion生产档只收HD
+            continue
         size = _size_of(f)
         if size < _MIN_PLAUSIBLE_VIDEO_BYTES or size > max_bytes:
             continue
@@ -226,7 +233,8 @@ def run(ctx: Ctx) -> None:
             ctx.warn(f"d1_source: {identifier} 疑似无解说素材(纯画面/音乐)，跳过")
             continue
 
-        picked = _pick_video_file(files, min_sec, max_sec, max_bytes)
+        picked = _pick_video_file(files, min_sec, max_sec, max_bytes,
+                                   min_height=cfg.get("p7.min_height", 0))
         if picked is None:
             continue
         f, duration = picked

@@ -505,3 +505,17 @@ def test_run_skips_downloaded_file_without_audio(tmp_path, monkeypatch):
     src = json.loads((ctx.job / "source.json").read_text())
     assert src["identifier"] == "good-one"        # 哑片被弃,选中第二部
     assert any("无音轨" in w for w in ctx.warnings)
+
+
+def test_pick_video_file_min_height_gate():
+    """p7.min_height 画质门:低于下限的档一律跳过(zion 生产档只收 >=720p)。"""
+    from src.stages.d1_source import _pick_video_file
+    files = [
+        {"name": "sd.mp4", "size": "5000000", "length": "600", "width": "640", "height": "360"},
+        {"name": "hd.mp4", "size": "9000000", "length": "600", "width": "1280", "height": "720"},
+    ]
+    f, dur = _pick_video_file(files, 300, 1800, 10**9, min_height=700)
+    assert f["name"] == "hd.mp4"
+    assert _pick_video_file([files[0]], 300, 1800, 10**9, min_height=700) is None  # 只有SD→整item拒
+    f2, _ = _pick_video_file([files[0]], 300, 1800, 10**9)                          # 不设门→SD可用
+    assert f2["name"] == "sd.mp4"
