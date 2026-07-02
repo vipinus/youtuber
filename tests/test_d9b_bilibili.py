@@ -282,3 +282,31 @@ def test_tags_over_10_and_over_20_chars_each_are_clamped(tmp_path, monkeypatch):
     sent_tags = cmd[cmd.index("--tag") + 1].split(",")
     assert len(sent_tags) <= 10
     assert all(len(t) <= 20 for t in sent_tags)
+
+
+def test_source_prefers_details_page(tmp_path, monkeypatch):
+    """--source 优先 archive.org /details/ 页(利于B站审核),非直接下载链。"""
+    import src.stages.d9b_bilibili as d9b
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    from src.util.jobs import write_json
+    import subprocess as sp
+
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        class R: returncode = 0; stdout = "BV1abcdefgh12"; stderr = ""
+        return R()
+    monkeypatch.setattr(sp, "run", fake_run)
+
+    cookie_dir = tmp_path / "sec"; cookie_dir.mkdir(); (cookie_dir / "cookies.json").write_text("{}")
+    cfg = Config({"bilibili": {"enabled": True, "cookie_dir": str(cookie_dir),
+                                "biliup_bin": "/bin/biliup"}})
+    ctx = Ctx(slug="c", config=cfg, root=tmp_path, llm=FakeLLM())
+    write_json(ctx.job, "meta.json", {"title": "t", "description": "d", "tags": ["x"]})
+    write_json(ctx.job, "source.json", {"identifier": "SomeDoc123",
+                                         "source_url": "https://archive.org/download/SomeDoc123/f.mp4"})
+    d9b.run(ctx)
+    i = seen["cmd"].index("--source")
+    assert seen["cmd"][i+1] == "https://archive.org/details/SomeDoc123"

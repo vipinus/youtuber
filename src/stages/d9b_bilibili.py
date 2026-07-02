@@ -85,7 +85,10 @@ def run(ctx: Ctx) -> None:
 
     title = _clamp_title(meta.get("title", ""))
     tags = _clamp_tags(meta.get("tags", []))
-    source_url = source.get("source_url") or _DEFAULT_SOURCE_URL
+    # 优先 /details/ 页面(人可读,利于B站审核核验来源);无 identifier 才退直链
+    identifier = source.get("identifier")
+    source_url = (f"https://archive.org/details/{identifier}" if identifier
+                  else source.get("source_url") or _DEFAULT_SOURCE_URL)
 
     cmd = [
         str(biliup_bin), "upload", str(ctx.job / "video.mp4"),
