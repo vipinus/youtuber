@@ -14,15 +14,27 @@ video.mp4。扩展 s7_assemble，思路取自已跑通的
 0 段旁白(narration.json 缺失或 segments 为空)：跳过第①遍，第②遍直接用
 背景(压 bg_gain，无旁白可 duck)+字幕合成，warn 不中断——保证任何 job 都能
 出片。
+
+背景床来源(`p7.bgm`，默认 replace)：真跑首次上传发现 NASA 公有领域片里常内嵌
+片方外购的商业库背景乐，demucs 的 no_vocals 背景床把它原样保留，触发了 4 条
+YouTube Content ID 版权认领(不下架但拦变现)。replace 模式改用
+`assets/bgm/`(`p7.bgm_dir`) 里的免版税 CC-BY 曲目：按 slug 的 crc32 确定性选一
+条(同 slug 永远同曲，换 slug 可能换)，`-stream_loop -1 -t {video_dur}` 循环铺满
+源片时长，接同一条 volume=bg_gain + sidechaincompress 侧链——no_vocals.mp3 只是
+不再被用作背景床(d2 仍照常产出，留作素材)。选中曲目写进 job 的 bgm.json，供
+d8_meta 追加 CC-BY 署名。曲目清单/目录缺失或清单为空 → warn 后回退 original
+模式(背景床=no_vocals.mp3)，绝不中止 run。
 """
 from __future__ import annotations
 
 import subprocess
+import zlib
 from pathlib import Path
+from typing import Callable
 
 from src.context import Ctx
 from src.util.ffprobe import duration_sec
-from src.util.jobs import exists, read_json
+from src.util.jobs import exists, read_json, write_json
 
 OUTPUT = "video.mp4"
 NARRATION = "narration.json"
@@ -30,6 +42,9 @@ SOURCE = "source.mp4"
 BACKGROUND = "no_vocals.mp3"
 SUBS = "subs.ass"
 NARRATION_TRACK = "narration.wav"          # 中间产物：第①遍拼好的旁白轨
+BGM_MANIFEST = "bgm.json"                  # p7.bgm_dir 下的曲目清单文件名
+JOB_BGM = "bgm.json"                       # job 目录：记录本次选中曲目(供 d8 署名)
+DEFAULT_BGM_DIR = "assets/bgm"
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
@@ -87,13 +102,45 @@ def build_narration_cmd(job: Path, segments: list[dict], video_dur: float, out_p
     return cmd
 
 
+def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None]) -> dict | None:
+    """从 `bgm_dir/bgm.json` 清单里按 slug 的 crc32 确定性挑一条(同 slug 永远同曲，
+    换 slug 可能换——不用 Date/random，保证同一 job 重跑选曲不变)。
+
+    清单/目录缺失、清单为空、或选中曲目的文件本身不存在，一律 warn 后返回
+    None，调用方回退 original 模式——never crash, never silent-fail。"""
+    if not exists(bgm_dir, BGM_MANIFEST):
+        warn(f"d7 BGM 清单缺失({bgm_dir / BGM_MANIFEST})，回退用 no_vocals 背景床")
+        return None
+    try:
+        manifest = read_json(bgm_dir, BGM_MANIFEST)
+    except Exception as e:
+        warn(f"d7 BGM 清单解析失败({type(e).__name__}: {e})，回退用 no_vocals 背景床")
+        return None
+    tracks = manifest.get("tracks") or []
+    if not tracks:
+        warn(f"d7 BGM 清单为空({bgm_dir / BGM_MANIFEST})，回退用 no_vocals 背景床")
+        return None
+    idx = zlib.crc32(slug.encode("utf-8")) % len(tracks)
+    entry = tracks[idx]
+    path = bgm_dir / entry.get("file", "")
+    if not path.exists():
+        warn(f"d7 BGM 选中曲目文件缺失({path})，回退用 no_vocals 背景床")
+        return None
+    return {"path": path, "entry": entry}
+
+
 def build_assemble_cmd(
     source: Path, bg: Path, narration: Path | None, subs: Path, out_path: Path, bg_gain: float,
+    bg_input_opts: list[str] | None = None,
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
-    再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。"""
+    再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
+
+    bg_input_opts：背景输入的额外 ffmpeg input 选项(如 replace 模式的
+    `-stream_loop -1 -t {video_dur}` 循环铺满源片时长)，插在背景的 `-i` 之前；
+    original 模式(bg=no_vocals.mp3，天然与源片等长)不需要，传 None/空列表。"""
     subs_esc = str(subs).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-    cmd = ["ffmpeg", "-y", "-i", str(source), "-i", str(bg)]
+    cmd = ["ffmpeg", "-y", "-i", str(source)] + list(bg_input_opts or []) + ["-i", str(bg)]
     if narration is not None:
         cmd += ["-i", str(narration)]
         fc = (
@@ -119,15 +166,32 @@ def build_assemble_cmd(
 def run(ctx: Ctx) -> None:
     job = ctx.job
     source = job / SOURCE
-    bg = job / BACKGROUND
     subs = job / SUBS
     bg_gain = ctx.config.get("p7.bg_gain", 0.5)
+    bgm_mode = ctx.config.get("p7.bgm", "replace")
 
     segments = read_json(job, NARRATION).get("segments", []) if exists(job, NARRATION) else []
     narration_path: Path | None = None
 
-    if segments:
+    bg = job / BACKGROUND
+    bg_input_opts: list[str] = []
+    picked = None
+    if bgm_mode == "replace":
+        bgm_dir = Path(ctx.config.get("p7.bgm_dir", DEFAULT_BGM_DIR))
+        picked = pick_bgm_track(bgm_dir, ctx.slug, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
+    elif bgm_mode != "original":
+        ctx.warn(f"{ctx.slug}: d7 未知 p7.bgm={bgm_mode!r}(应为 replace|original)，回退用 no_vocals 背景床")
+
+    video_dur: float | None = None
+    if segments or picked is not None:
         video_dur = round(duration_sec(source), 3)
+
+    if picked is not None:
+        bg = picked["path"]
+        bg_input_opts = ["-stream_loop", "-1", "-t", f"{video_dur}"]
+        write_json(job, JOB_BGM, picked["entry"])
+
+    if segments:
         capped = [s.get("id") for s, f in zip(segments, tempo_factors(segments, video_dur))
                   if f >= MAX_TEMPO]
         if capped:
@@ -143,7 +207,7 @@ def run(ctx: Ctx) -> None:
     else:
         ctx.warn(f"{ctx.slug}: d7_assemble 无旁白段(narration.json 缺失或为空)，仅用背景+字幕合成")
 
-    cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain)
+    cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain, bg_input_opts)
     proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(

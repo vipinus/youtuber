@@ -1,0 +1,9 @@
+{
+  "license_note": "Kevin MacLeod (incompetech.com), Licensed under Creative Commons: By Attribution 4.0 — 使用须在简介署名(d8 自动追加)",
+  "tracks": [
+    {"file": "Frozen_Star.mp3", "title": "Frozen Star", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "attribution": "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Floating_Cities.mp3", "title": "Floating Cities", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "attribution": "背景音乐：Floating Cities - Kevin MacLeod (incompetech.com), CC BY 4.0"}
+  ]
+}

@@ -9,6 +9,7 @@ from src.context import Ctx
 from src.llm import FakeLLM
 from src.util.jobs import read_json, write_json
 from src.stages.d8_meta import (
+    BGM_INPUT,
     OUTPUT,
     INPUT,
     SOURCE_INPUT,
@@ -89,6 +90,41 @@ def test_run_no_attribution_when_source_missing(tmp_path):
     run(ctx)
     meta = read_json(ctx.job, OUTPUT)
     assert "素材来源" not in meta["description"]
+
+
+# ---------------------------------------------------------------------------
+# BGM 署名追加 —— job 有 bgm.json(d7_assemble replace 模式写的)就追加 CC-BY
+# 署名行；没有就静默跳过(STAGES_P7 里 d7_assemble 在 d8_meta 之前跑，见
+# src/run.py：正常链路 d7 会先落 bgm.json，这里同时兜底缺失场景)。
+# ---------------------------------------------------------------------------
+
+def test_run_appends_bgm_attribution_when_job_bgm_json_exists(tmp_path):
+    ctx = _ctx(tmp_path, _CANNED)
+    write_json(ctx.job, BGM_INPUT, {
+        "file": "Frozen_Star.mp3", "title": "Frozen Star", "artist": "Kevin MacLeod",
+        "license": "CC-BY-4.0",
+        "attribution": "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0",
+    })
+    run(ctx)
+    meta = read_json(ctx.job, OUTPUT)
+    assert "NASA / Apollo 11" in meta["description"]      # 源片署名还在
+    assert "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0" in meta["description"]
+
+
+def test_run_skips_bgm_attribution_when_job_bgm_json_absent(tmp_path):
+    ctx = _ctx(tmp_path, _CANNED)                          # 没写 bgm.json(original 模式/回退场景)
+    run(ctx)
+    meta = read_json(ctx.job, OUTPUT)
+    assert "背景音乐" not in meta["description"]
+
+
+def test_run_bgm_attribution_survives_malformed_bgm_json(tmp_path):
+    """bgm.json 存在但损坏/无 attribution 字段——不该崩最后一阶段，静默跳过。"""
+    ctx = _ctx(tmp_path, _CANNED)
+    (ctx.job / BGM_INPUT).write_text("{not valid json", encoding="utf-8")
+    run(ctx)                                              # 不应抛出
+    meta = read_json(ctx.job, OUTPUT)
+    assert "背景音乐" not in meta["description"]
 
 
 def test_run_no_network_no_ssh(tmp_path, monkeypatch):

@@ -13,6 +13,10 @@
   4. 追加源片署名到简介（如 "素材来源：NASA / Apollo 11（公有领域）"），写
      meta.json = {"title","description","tags"}——字段和 s9_publish 读的
      meta.json（INPUT）完全兼容，s9_publish 本身不用改。
+  5. 若 job 里有 bgm.json（d7_assemble replace 模式选中的背景曲目，STAGES_P7
+     里 d7 在 d8 之前跑，见 src/run.py），再追加它的 attribution 行——
+     Kevin MacLeod 等 CC-BY 曲目要求署名，缺 bgm.json（original 模式/d7 早期
+     版本）就跳过，不崩。
 """
 from __future__ import annotations
 
@@ -29,6 +33,7 @@ from src.util.llmjson import extract_json
 OUTPUT = "meta.json"
 INPUT = "zh_script.json"
 SOURCE_INPUT = "source.json"
+BGM_INPUT = "bgm.json"        # d7_assemble replace 模式写入的选中曲目记录(CC-BY 署名来源)
 DEFAULT_WATERMARK = "assets/watermark_tr.png"
 DEFAULT_IMAGE_PROMPT = (
     "cinematic dramatic space documentary scene, nebula and starfield, "
@@ -74,6 +79,20 @@ def _attribution_line(source: dict) -> str:
         return ""
     label = _LICENSE_LABELS.get(source.get("license"), source.get("license") or "")
     return f"素材来源：{attribution}（{label}）" if label else f"素材来源：{attribution}"
+
+
+def _bgm_attribution_line(job: Path) -> str:
+    """d7_assemble replace 模式会在 job 里落一份 bgm.json(选中曲目的清单条目)。
+    缺失(original 模式/替换失败回退)就静默跳过；文件存在但损坏也不该崩最后
+    一阶段，一并吞掉。"""
+    if not exists(job, BGM_INPUT):
+        return ""
+    try:
+        bgm = read_json(job, BGM_INPUT)
+    except Exception:
+        return ""
+    attribution = (bgm or {}).get("attribution")
+    return attribution or ""
 
 
 def _panel_with_watermark(watermark: Image.Image, target_w: int = 170, pad: int = 16) -> Image.Image:
@@ -209,6 +228,10 @@ def run(ctx: Ctx) -> None:
     attrib = _attribution_line(source)
     if attrib:
         meta["description"] = (meta.get("description") or "") + "\n\n" + attrib
+
+    bgm_attrib = _bgm_attribution_line(ctx.job)
+    if bgm_attrib:
+        meta["description"] = (meta.get("description") or "") + "\n\n" + bgm_attrib
 
     image_prompt = meta.get("image_prompt") or DEFAULT_IMAGE_PROMPT
     remote = get_remote(ctx.config)

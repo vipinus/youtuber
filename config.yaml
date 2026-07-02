@@ -37,7 +37,14 @@ p7:                        # P7 整片翻译管线：d1_source 选片参数(首�
   max_bytes: 500000000      # ~500MB 单文件上限：整片要清晰但不下单片吃满带宽/磁盘的母版
   collections:               # 首题材=太空：只在 NASA 集合里选，既贴题又产权最干净。
     - nasa                   # 换题材时改这里(可用可信集合见 src/media._ARCHIVE_SEARCH_COLLECTIONS)
-  bg_gain: 0.5              # d7_assemble：no_vocals 背景床音量(sidechaincompress duck 前)，0~1
+  bg_gain: 0.5              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
+  bgm: replace              # d7_assemble 背景床来源：replace(默认，免版税) | original(demucs no_vocals)
+                             # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
+                             # 配乐，demucs 去人声后原样保留在 no_vocals 背景床里，触发 4 条 YouTube
+                             # Content ID 版权认领(不下架但拦变现)。replace 换成 assets/bgm 下的
+                             # CC-BY 免版税曲目，从源头消掉认领风险。
+  bgm_dir: assets/bgm       # replace 模式的曲目池目录(须含 bgm.json 清单)；缺失/清单空 → 自动回退
+                             # original，只告警不中止 run
   watermark: assets/watermark_tr.png  # d8_meta：缩略图右上角频道水印(透明底 PNG)
 publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
