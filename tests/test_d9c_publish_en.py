@@ -287,3 +287,23 @@ def test_make_en_thumbnail_renders(tmp_path):
     make_en_thumbnail(dest, "The Space Shuttle Narrated by William Shatner",
                       bg, Path("assets/watermark_en_tr.png"))
     assert dest.exists() and Image.open(dest).size == (1280, 720)
+
+def test_extract_frame_bg_missing_video_returns_false(tmp_path):
+    from src.stages.d9c_publish_en import _extract_frame_bg
+    assert _extract_frame_bg(tmp_path / "nope.mp4", tmp_path / "bg.png") is False
+    assert not (tmp_path / "bg.png").exists()
+
+
+def test_extract_frame_bg_from_real_video(tmp_path):
+    """thumb_bg.png 被 d10 归档裁剪后,d9c 从源片抽帧补背景(真 ffmpeg)。"""
+    import subprocess
+    from src.stages.d9c_publish_en import _extract_frame_bg
+    from PIL import Image
+    video = tmp_path / "source.mp4"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+         "testsrc=duration=10:size=320x240:rate=10", str(video)],
+        capture_output=True, check=True)
+    bg = tmp_path / "thumb_bg.png"
+    assert _extract_frame_bg(video, bg) is True
+    assert Image.open(bg).size == (1280, 720)

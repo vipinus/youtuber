@@ -124,6 +124,28 @@ def make_en_thumbnail(dest: Path, title: str, bg: Path, watermark: Path,
     img.convert("RGB").save(dest, "JPEG", quality=88, optimize=True)
 
 
+def _extract_frame_bg(video: Path, dest: Path) -> bool:
+    """thumb_bg.png 缺失(通常被 d10 归档裁剪)时从源片抽一帧当封面背景。
+    取片长 22% 处——躲开片头字幕卡/logo,又不至于深入正片撞上采访人脸。
+    任何失败(源片也没了/ffmpeg 缺失)→ False,调用方落回纯色兜底,不 raise。"""
+    import subprocess
+    if not video.exists():
+        return False
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(video)],
+            capture_output=True, text=True, timeout=60, check=True)
+        t = max(1.0, float(probe.stdout.strip()) * 0.22)
+        subprocess.run(
+            ["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.1f}", "-i", str(video),
+             "-frames:v", "1", "-vf", "scale=1280:720", str(dest)],
+            capture_output=True, timeout=120, check=True)
+        return dest.exists() and dest.stat().st_size > 0
+    except Exception:  # noqa: BLE001 — 抽帧只是锦上添花
+        return False
+
+
 def _build_meta(source: dict) -> dict:
     title = (source.get("title") or "")[:_TITLE_MAX_CHARS]
     identifier = source.get("identifier")
@@ -162,9 +184,12 @@ def run(ctx: Ctx) -> None:
         video = ctx.job / "source.mp4"                # 英文原声原片，非中文配音的 video.mp4
         # 英文封面:AI 背景 + 金属英文标题 + 英文水印(生成失败退回裸背景图,再不行跳过封面)
         thumb = ctx.job / "thumb_en.jpg"
+        bg = ctx.job / "thumb_bg.png"
+        if not bg.exists() and _extract_frame_bg(video, bg):
+            ctx.warn(f"{ctx.slug}: thumb_bg.png 缺失,已从源片抽帧补背景")
         try:
             make_en_thumbnail(
-                thumb, meta["title"], ctx.job / "thumb_bg.png",
+                thumb, meta["title"], bg,
                 Path(ctx.config.get("youtube_en.watermark", "assets/watermark_en_tr.png")),
                 font_path=ctx.config.get("paths.title_font", None),
             )
