@@ -50,6 +50,10 @@ p7:                        # P7 整片翻译管线：d1_source 选片参数(首�
   bgm_dir: assets/bgm       # replace 模式的曲目池目录(须含 bgm.json 清单)；缺失/清单空 → 自动回退
                              # original，只告警不中止 run
   watermark: assets/watermark_tr.png  # d8_meta：缩略图右上角频道水印(透明底 PNG)
+  video_watermark: true    # P7 T18：正片全程烧台标水印(右上/右下电视台角标式切换)，
+                             # 关掉就不叠加、跟老行为一致；文件缺失/读不到也自动跳过，只告警不中止
+  wm_min_sec: 300           # 水印切换间隔下限(5min)
+  wm_max_sec: 600           # 水印切换间隔上限(10min)——切换点由 slug 的 crc32 确定性生成(同 slug 重跑不变)
 publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
   visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）

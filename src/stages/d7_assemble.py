@@ -32,6 +32,17 @@ YouTube Content ID 版权认领(不下架但拦变现)。replace 模式改用
 不再被用作背景床(d2 仍照常产出，留作素材)。选中曲目写进 job 的 bgm.json，供
 d8_meta 追加 CC-BY 署名。曲目清单/目录缺失或清单为空 → warn 后回退 original
 模式(背景床=no_vocals.mp3)，绝不中止 run。
+
+P7 T18：`p7.video_watermark`(默认开)把频道台标(`p7.watermark`，跟 d8 缩略图共用
+同一张透明底 PNG)烧进正片全程——电视台角标样式，右上(TR)/右下(BR)按
+`p7.wm_min_sec`~`p7.wm_max_sec`(默认 5~10min)随机间隔切换，从右上开始。切换点
+由 slug 的 crc32 派生一个确定性 LCG 生成(`watermark_windows`，跟 pick_bgm_track
+选曲同一"不用 random/时间戳"的思路)——同 slug 重跑窗口/位置序列完全一致。水印
+输入缩到 140px 宽、转 rgba、调 85% 不透明度，叠在字幕烧完的画面上；BR 位
+`H-h-130` 特意抬高，避开烧字幕常驻的底部约 120px 区域，不挡字。视频短于
+`wm_min_sec`(整部片子不够切一次)时天然只出一个覆盖全片的 TR 窗口，只叠一路，
+省一次 split/overlay。开关关闭、或水印文件缺失/读不到 → 按老逻辑拼命令(无水印
+输入、无 overlay 段)，warn 后继续，绝不因为水印功能中止渲染。
 """
 from __future__ import annotations
 
@@ -56,10 +67,16 @@ BGM_MANIFEST = "bgm.json"                  # p7.bgm_dir 下的曲目清单文件
 JOB_BGM = "bgm.json"                       # job 目录：记录本次选中曲目(供 d8 署名)
 DEFAULT_BGM_DIR = "assets/bgm"
 DEFAULT_ENCODER_LIB_PATH = "/run/opengl-driver/lib"    # NVENC 需要的 NixOS NVIDIA 驱动库路径(zion 已验证)
+DEFAULT_WATERMARK = "assets/watermark_tr.png"          # P7 T18：跟 d8_meta 缩略图共用同一张透明底台标
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
 MAX_TEMPO = 1.4               # atempo 压缩比封顶：再快听感就"赶"了；超限段保留少量重叠并告警
+
+WM_MIN_SEC = 300.0            # P7 T18：水印切换间隔下限(5min)，config p7.wm_min_sec 覆盖
+WM_MAX_SEC = 600.0            # 水印切换间隔上限(10min)，config p7.wm_max_sec 覆盖
+WM_TR = "TR"                  # 右上角标位
+WM_BR = "BR"                  # 右下角标位(抬高 130px 避开烧字幕区)
 
 
 def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
@@ -140,9 +157,74 @@ def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None]) -> dic
     return {"path": path, "entry": entry}
 
 
+def _lcg_stream(seed: int):
+    """确定性线性同余生成器(LCG)：由 crc32(slug) 派生的种子起步，逐次产出 [0,1) 的
+    伪随机浮点数流。不读 random/时间戳——跟 pick_bgm_track 的 crc32 选曲同一思路，
+    保证同一 slug 重跑水印切换区间(watermark_windows)完全一致，换 slug 大概率
+    不同(种子不同)。"""
+    state = seed & 0x7FFFFFFF
+    while True:
+        state = (1103515245 * state + 12345) & 0x7FFFFFFF
+        yield state / 0x7FFFFFFF
+
+
+def watermark_windows(
+    slug: str, video_dur: float, wm_min_sec: float = WM_MIN_SEC, wm_max_sec: float = WM_MAX_SEC,
+) -> list[tuple[float, float, str]]:
+    """把 [0, video_dur] 切成随机 wm_min_sec~wm_max_sec(默认 5~10min)长的区间，位置
+    从右上(TR)开始逐窗交替右下(BR)——电视台角标换位样式。切分点由 _lcg_stream(按
+    slug 的 crc32 播种)生成，纯函数确定性：同 slug 两次调用返回完全一致的窗口列表，
+    换 slug 大概率不同。末尾窗口裁到 video_dur(不越界，天然让窗口精确铺满整段
+    时长)；片长比 wm_min_sec 还短时，第一个采样区间必然 >= wm_min_sec > video_dur，
+    自然只切出一个覆盖全片的 TR 窗口。"""
+    if video_dur is None or video_dur <= 0:
+        return []
+    rng = _lcg_stream(zlib.crc32(slug.encode("utf-8")))
+    windows: list[tuple[float, float, str]] = []
+    positions = (WM_TR, WM_BR)
+    t = 0.0
+    i = 0
+    while t < video_dur:
+        interval = wm_min_sec + next(rng) * (wm_max_sec - wm_min_sec)
+        end = min(t + interval, video_dur)
+        windows.append((round(t, 3), round(end, 3), positions[i % 2]))
+        t = end
+        i += 1
+    return windows
+
+
+def _watermark_enable_expr(windows: list[tuple[float, float, str]], position: str) -> str:
+    """给定位置(TR/BR)把命中窗口拼成 ffmpeg overlay 的 enable 表达式：
+    `between(t,a,b)+between(t,c,d)+...`——落在任一窗口区间内就显示，否则隐藏。"""
+    return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == position)
+
+
+def build_watermark_filter(wm_idx: int, windows: list[tuple[float, float, str]]) -> str:
+    """拼水印叠加的 filter_complex 片段，接在已烧好字幕的 `[vsub]` 后面产出
+    `[vout]`：水印输入缩到 140px 宽、转 rgba、调到 85% 不透明度；TR 叠
+    `overlay=W-w-24:24`，BR 叠 `overlay=W-w-24:H-h-130`(抬高 130px 避开烧字幕
+    常驻的底部区域，不挡字)。只有一个窗口(短视频不够切换一次)时只叠对应那一路，
+    省一次 split/overlay；两路都有窗口时 split 成 wmA(右上)/wmB(右下)分别叠加，
+    先叠 TR 再叠 BR，最终汇到 `[vout]`。"""
+    tr_expr = _watermark_enable_expr(windows, WM_TR)
+    br_expr = _watermark_enable_expr(windows, WM_BR)
+    scale = f"[{wm_idx}:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85"
+    if tr_expr and br_expr:
+        return (
+            f"{scale},split[wmA][wmB];"
+            f"[vsub][wmA]overlay=W-w-24:24:enable='{tr_expr}'[vtr];"
+            f"[vtr][wmB]overlay=W-w-24:H-h-130:enable='{br_expr}'[vout]"
+        )
+    position_expr = tr_expr or br_expr
+    y = "24" if tr_expr else "H-h-130"
+    return f"{scale}[wm];[vsub][wm]overlay=W-w-24:{y}:enable='{position_expr}'[vout]"
+
+
 def build_assemble_cmd(
     source: Path, bg: Path, narration: Path | None, subs: Path, out_path: Path, bg_gain: float,
     bg_input_opts: list[str] | None = None, encoder: str = "libx264",
+    video_dur: float | None = None, slug: str = "", config: Config | None = None,
+    warn: Callable[[str], None] | None = None,
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
     再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
@@ -153,22 +235,48 @@ def build_assemble_cmd(
 
     encoder：`libx264`(默认，笔记本兼容) | `nvenc`(zion 原生跑时用 GPU 编码，
     见 `p7.encoder`)——nvenc 跑失败时调用方(run())负责 warn + 回退 libx264 重试，
-    这里只管拼命令，不做失败判断。"""
+    这里只管拼命令，不做失败判断。
+
+    P7 T18 水印：video_dur/slug/config 三者齐全 + `p7.video_watermark`(默认开)
+    未关闭 + `p7.watermark` 指向的文件存在，才会追加水印输入 + overlay 段(接在
+    subtitles 输出 `[vsub]` 后面，最终仍汇到 `[vout]`，两种 narration 变体
+    的音频编排/`-map` 完全不受影响)。三者缺一(config=None——多数既有直调用例
+    不传、video_dur=None、开关关、文件缺失/不可读)都直接跳过，按老逻辑拼命令；
+    文件缺失时若传了 warn 会告警一次，绝不因为水印功能中止渲染。"""
     subs_esc = str(subs).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
     cmd = ["ffmpeg", "-y", "-i", str(source)] + list(bg_input_opts or []) + ["-i", str(bg)]
+
+    wm_idx = 2
     if narration is not None:
         cmd += ["-i", str(narration)]
-        fc = (
+        wm_idx = 3
+        audio_fc = (
             f"[1:a]volume={bg_gain}[bg];"
             f"[bg][2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
-            f"[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout];"
-            f"[0:v]subtitles='{subs_esc}'[vout]"
+            f"[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
         )
     else:
-        fc = (
-            f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout];"
-            f"[0:v]subtitles='{subs_esc}'[vout]"
+        audio_fc = f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout]"
+
+    wm_path: Path | None = None
+    if config is not None and config.get("p7.video_watermark", True):
+        candidate = Path(config.get("p7.watermark", DEFAULT_WATERMARK))
+        if candidate.exists():
+            wm_path = candidate
+        elif warn is not None:
+            warn(f"d7 台标水印文件缺失({candidate})，跳过视频水印叠加")
+
+    if wm_path is not None and video_dur is not None and video_dur > 0:
+        cmd += ["-i", str(wm_path)]
+        windows = watermark_windows(
+            slug, video_dur,
+            config.get("p7.wm_min_sec", WM_MIN_SEC), config.get("p7.wm_max_sec", WM_MAX_SEC),
         )
+        video_fc = f"[0:v]subtitles='{subs_esc}'[vsub];" + build_watermark_filter(wm_idx, windows)
+    else:
+        video_fc = f"[0:v]subtitles='{subs_esc}'[vout]"
+
+    fc = f"{audio_fc};{video_fc}"
     video_codec_args = (
         ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "23"] if encoder == "nvenc"
         else ["-c:v", "libx264"]
@@ -214,8 +322,14 @@ def run(ctx: Ctx) -> None:
     elif bgm_mode != "original":
         ctx.warn(f"{ctx.slug}: d7 未知 p7.bgm={bgm_mode!r}(应为 replace|original)，回退用 no_vocals 背景床")
 
+    # P7 T18：水印开关+文件存在性只影响"要不要 ffprobe 源片时长"这个判断本身，
+    # 不在这里 warn(避免跟 build_assemble_cmd 里同一份检查重复告警一次)——真正
+    # 的开关/文件校验 + warn 落在 build_assemble_cmd 里，此处只是它的一份轻量预判。
+    watermark_ready = bool(ctx.config.get("p7.video_watermark", True)) and \
+        Path(ctx.config.get("p7.watermark", DEFAULT_WATERMARK)).exists()
+
     video_dur: float | None = None
-    if segments or picked is not None:
+    if segments or picked is not None or watermark_ready:
         video_dur = round(duration_sec(source), 3)
 
     if picked is not None:
@@ -240,8 +354,13 @@ def run(ctx: Ctx) -> None:
         ctx.warn(f"{ctx.slug}: d7_assemble 无旁白段(narration.json 缺失或为空)，仅用背景+字幕合成")
 
     encoder = ctx.config.get("p7.encoder", "libx264")
+
+    def wm_warn(msg: str) -> None:
+        ctx.warn(f"{ctx.slug}: {msg}")
+
     cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
-                               bg_input_opts, encoder=encoder)
+                               bg_input_opts, encoder=encoder,
+                               video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn)
     env2 = nvenc_env(ctx.config) if encoder == "nvenc" else None
     proc2 = subprocess.run(cmd2, capture_output=True, text=True, env=env2)
     if proc2.returncode != 0 and encoder == "nvenc":
@@ -250,7 +369,8 @@ def run(ctx: Ctx) -> None:
         ctx.warn(f"{ctx.slug}: d7 nvenc 编码失败(exit {proc2.returncode})，回退 libx264 重试一次: "
                  f"{(proc2.stderr or '')[-500:]}")
         cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
-                                   bg_input_opts, encoder="libx264")
+                                   bg_input_opts, encoder="libx264",
+                                   video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn)
         proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(

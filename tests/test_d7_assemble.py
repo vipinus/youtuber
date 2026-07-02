@@ -17,26 +17,32 @@ from src.stages.d7_assemble import (
     BACKGROUND,
     BGM_MANIFEST,
     DEFAULT_ENCODER_LIB_PATH,
+    DEFAULT_WATERMARK,
     JOB_BGM,
     NARRATION,
     NARRATION_TRACK,
     OUTPUT,
     SOURCE,
     SUBS,
+    WM_BR,
+    WM_TR,
     build_assemble_cmd,
     build_narration_cmd,
     build_narration_filter,
+    build_watermark_filter,
     nvenc_env,
     pick_bgm_track,
     run,
+    watermark_windows,
 )
 
 
 def _ctx(tmp_path, cfg_data=None) -> Ctx:
-    """默认 p7.bgm=original——这批既有测试盯的是旁白/字幕两遍 ffmpeg 编排本身，
-    不该被"replace 是新默认值"这件事顺带牵连(也不该意外读到仓库根的真实
-    assets/bgm)。要测 replace 模式的用例显式传 cfg_data 覆盖。"""
-    data = {"p7": {"bgm": "original"}}
+    """默认 p7.bgm=original + p7.video_watermark=false——这批既有测试盯的是旁白/
+    字幕两遍 ffmpeg 编排本身，不该被"replace 是新默认值"或"水印默认开"这些事
+    顺带牵连(也不该意外读到仓库根的真实 assets/bgm、assets/watermark_tr.png)。
+    要测 replace/水印的用例显式传 cfg_data 覆盖。"""
+    data = {"p7": {"bgm": "original", "video_watermark": False}}
     if cfg_data:
         merged_p7 = {**data["p7"], **(cfg_data.get("p7") or {})}
         data = {**cfg_data, "p7": merged_p7}
@@ -676,6 +682,366 @@ def test_run_replace_mode_manifest_missing_falls_back_to_original(tmp_path, monk
     assert not (ctx.job / JOB_BGM).exists()
     assert any("回退" in w for w in ctx.warnings)
     assert (ctx.job / OUTPUT).exists()                     # 没中止，照样出片
+
+
+# ---------------------------------------------------------------------------
+# watermark_windows — P7 T18：确定性伪随机窗口切分 + TR/BR 交替
+# ---------------------------------------------------------------------------
+
+def test_watermark_windows_deterministic_same_slug_same_result():
+    w1 = watermark_windows("doc1", 1800.0)
+    w2 = watermark_windows("doc1", 1800.0)
+    assert w1 == w2                                       # 同 slug 两次调用完全一致
+    assert w1                                              # 且真的切出了窗口
+
+
+def test_watermark_windows_different_slugs_can_differ():
+    a = watermark_windows("doc1", 1800.0)
+    b = watermark_windows("roswell-1947", 1800.0)
+    assert a != b                                          # 换 slug 大概率不同(种子不同)
+
+
+def test_watermark_windows_intervals_within_bounds_except_possibly_last():
+    windows = watermark_windows("doc1", 1800.0, wm_min_sec=300.0, wm_max_sec=600.0)
+    assert len(windows) > 1
+    for a, b, _ in windows[:-1]:
+        assert 300.0 <= (b - a) <= 600.0                   # 除最后一个都在 [min,max] 内
+    last_a, last_b, _ = windows[-1]
+    assert last_b - last_a <= 600.0                        # 末尾窗口只可能被裁短，不会超限
+
+
+def test_watermark_windows_tile_video_dur_exactly():
+    video_dur = 1800.0
+    windows = watermark_windows("doc1", video_dur, wm_min_sec=300.0, wm_max_sec=600.0)
+    assert windows[0][0] == 0.0                            # 从 0 开始
+    for (a1, b1, _), (a2, b2, _) in zip(windows, windows[1:]):
+        assert b1 == a2                                    # 前一个窗口的 end == 下一个的 start
+    assert windows[-1][1] == video_dur                     # 铺满到片尾，不多不少
+
+
+def test_watermark_windows_alternate_positions_starting_tr():
+    windows = watermark_windows("doc1", 1800.0, wm_min_sec=300.0, wm_max_sec=600.0)
+    assert windows[0][2] == WM_TR                          # 起始位=右上
+    for i, (_, _, pos) in enumerate(windows):
+        assert pos == (WM_TR if i % 2 == 0 else WM_BR)     # 严格交替
+
+
+def test_watermark_windows_short_video_single_tr_window():
+    """片长比 wm_min_sec 还短(默认 300s)：切不出第二个窗口，整段只有一个 TR 窗口。"""
+    windows = watermark_windows("doc1", 200.0)
+    assert len(windows) == 1
+    a, b, pos = windows[0]
+    assert (a, b, pos) == (0.0, 200.0, WM_TR)
+
+
+def test_watermark_windows_zero_or_negative_duration_returns_empty():
+    assert watermark_windows("doc1", 0.0) == []
+    assert watermark_windows("doc1", -5.0) == []
+
+
+def test_watermark_windows_wm_min_max_sec_knobs_applied():
+    windows = watermark_windows("doc1", 100.0, wm_min_sec=10.0, wm_max_sec=20.0)
+    assert len(windows) > 1                                # 更短的区间下，200s 短片默认单窗口，10~20s 下能切出好几个
+    for a, b, _ in windows[:-1]:
+        assert 10.0 <= (b - a) <= 20.0
+
+
+# ---------------------------------------------------------------------------
+# build_watermark_filter — 拼 filter_complex 片段本身(scale/overlay/enable)
+# ---------------------------------------------------------------------------
+
+def test_build_watermark_filter_multi_window_wires_split_and_both_positions():
+    windows = watermark_windows("doc1", 1800.0, wm_min_sec=300.0, wm_max_sec=600.0)
+    fc = build_watermark_filter(3, windows)
+    assert "[3:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85,split[wmA][wmB]" in fc
+    assert "[vsub][wmA]overlay=W-w-24:24:enable=" in fc
+    assert "[vtr][wmB]overlay=W-w-24:H-h-130:enable=" in fc
+    assert fc.endswith("[vout]")
+    tr_expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == WM_TR)
+    br_expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == WM_BR)
+    assert tr_expr in fc
+    assert br_expr in fc
+
+
+def test_build_watermark_filter_single_window_skips_split_and_second_overlay():
+    windows = watermark_windows("doc1", 200.0)                # 单一 TR 窗口
+    fc = build_watermark_filter(2, windows)
+    assert "split" not in fc
+    assert "wmB" not in fc
+    assert "H-h-130" not in fc
+    assert "[2:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85[wm]" in fc
+    assert "overlay=W-w-24:24:enable='between(t,0.000,200.000)'[vout]" in fc
+
+
+# ---------------------------------------------------------------------------
+# build_assemble_cmd — P7 T18 水印叠加 wiring(narration/no-narration 两种变体)
+# ---------------------------------------------------------------------------
+
+def _wm_file(tmp_path) -> Path:
+    p = tmp_path / "wm.png"
+    p.write_bytes(b"FAKEPNG")                                 # 只测路径/命令编排，不需要真图
+    return p
+
+
+def test_build_assemble_cmd_watermark_wires_overlay_no_narration_variant(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm)}})
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1", config=cfg)
+    assert cmd.count("-i") == 3                              # source + bg + watermark
+    assert str(wm) in cmd
+    assert cmd[cmd.index(str(wm)) - 1] == "-i"
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[2:v]scale=140:-1" in fc                          # wm_idx=2(无旁白：source=0,bg=1)
+    assert "colorchannelmixer=aa=0.85" in fc
+    assert "split[wmA][wmB]" in fc
+    assert "overlay=W-w-24:24:enable=" in fc
+    assert "overlay=W-w-24:H-h-130:enable=" in fc
+    assert "subtitles=" in fc and "[vsub]" in fc
+    assert "sidechaincompress" not in fc                      # 无旁白变体：ducking 逻辑不受水印影响
+    assert "volume=0.5" in fc                                 # 音频编排照旧
+    assert "-map" in cmd and "[vout]" in cmd and "[aout]" in cmd
+    assert cmd[-1] == str(out)
+
+
+def test_build_assemble_cmd_watermark_wires_overlay_narration_variant(tmp_path):
+    source, bg, nar, subs, out = (
+        tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / NARRATION_TRACK,
+        tmp_path / SUBS, tmp_path / OUTPUT,
+    )
+    wm = _wm_file(tmp_path)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm)}})
+    cmd = build_assemble_cmd(source, bg, nar, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1", config=cfg)
+    assert cmd.count("-i") == 4                              # source + bg + narration + watermark
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[3:v]scale=140:-1" in fc                          # wm_idx=3(有旁白：source=0,bg=1,narration=2)
+    assert "sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300" in fc
+    assert "[bg][2:a]sidechaincompress" in fc                 # 旁白 duck 音频逻辑不受水印影响
+    assert "amix=inputs=2:normalize=0" in fc
+    assert "alimiter=limit=0.95" in fc
+    assert "split[wmA][wmB]" in fc
+    assert "-map" in cmd and "[vout]" in cmd and "[aout]" in cmd
+    assert cmd[-1] == str(out)
+
+
+def test_build_assemble_cmd_watermark_enable_exprs_match_generated_windows(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm), "wm_min_sec": 300, "wm_max_sec": 600}})
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1", config=cfg)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    windows = watermark_windows("doc1", 1800.0, 300, 600)
+    tr_expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == WM_TR)
+    br_expr = "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == WM_BR)
+    assert f"enable='{tr_expr}'" in fc
+    assert f"enable='{br_expr}'" in fc
+
+
+def test_build_assemble_cmd_watermark_short_video_single_window_no_second_overlay(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm)}})
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=200.0, slug="doc1", config=cfg)     # < wm_min_sec(300s) 默认下限
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "split" not in fc
+    assert "H-h-130" not in fc
+    assert "overlay=W-w-24:24:enable='between(t,0.000,200.000)'[vout]" in fc
+
+
+def test_build_assemble_cmd_watermark_wm_min_max_sec_config_knobs_applied(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm), "wm_min_sec": 10, "wm_max_sec": 20}})
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=100.0, slug="doc1", config=cfg)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    windows = watermark_windows("doc1", 100.0, 10, 20)
+    assert len(windows) > 1                                   # 用了更小的窗口才切得出好几个
+    assert "split[wmA][wmB]" in fc
+
+
+# ---------------------------------------------------------------------------
+# build_assemble_cmd — P7 T18 水印关闭/缺失文件 → 回到老行为，绝不中止
+# ---------------------------------------------------------------------------
+
+def test_build_assemble_cmd_watermark_disabled_identical_to_no_config(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)                                   # 文件真实存在，但开关关了
+    baseline = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5)
+    cfg = Config({"p7": {"video_watermark": False, "watermark": str(wm)}})
+    warned = []
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1", config=cfg, warn=warned.append)
+    assert cmd == baseline                                    # 关了就跟老行为一模一样
+    assert warned == []                                       # 关闭不算异常，不该 warn
+
+
+def test_build_assemble_cmd_watermark_missing_file_warns_and_falls_back(tmp_path):
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    baseline = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5)
+    missing = tmp_path / "no-such-watermark.png"
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(missing)}})
+    warned = []
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1", config=cfg, warn=warned.append)
+    assert cmd == baseline                                    # 文件缺失 → 回到老命令形状
+    assert any("缺失" in w and str(missing) in w for w in warned)
+
+
+def test_build_assemble_cmd_watermark_no_config_identical_to_no_config(tmp_path):
+    """config=None(既有直调用例的默认调法) → 跟压根没有水印功能时一模一样，
+    保证老测试不用改就能继续过。"""
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    baseline = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5)
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5,
+                              video_dur=1800.0, slug="doc1")   # 没传 config
+    assert cmd == baseline
+
+
+def test_build_assemble_cmd_watermark_no_video_dur_skips_even_if_file_exists(tmp_path):
+    """video_dur 缺失(没算出片长)时即便开关开着文件也在，也不该硬叠(没有时长就没法切窗口)。"""
+    source, bg, subs, out = tmp_path / SOURCE, tmp_path / BACKGROUND, tmp_path / SUBS, tmp_path / OUTPUT
+    wm = _wm_file(tmp_path)
+    baseline = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5)
+    cfg = Config({"p7": {"video_watermark": True, "watermark": str(wm)}})
+    cmd = build_assemble_cmd(source, bg, None, subs, out, bg_gain=0.5, slug="doc1", config=cfg)
+    assert cmd == baseline
+
+
+# ---------------------------------------------------------------------------
+# run() —— P7 T18：video_dur/slug/config 接进 build_assemble_cmd 的调用点
+# ---------------------------------------------------------------------------
+
+def test_run_watermark_enabled_no_narration_computes_duration_and_wires_overlay(tmp_path, monkeypatch):
+    """0 段旁白也要能出水印(run() 之前只在有旁白/replace bgm 时才 ffprobe 时长，
+    水印功能要求任何路径都得先拿到 video_dur 才能切窗口)。"""
+    wm = _wm_file(tmp_path)
+    ctx = _ctx(tmp_path, {"p7": {"video_watermark": True, "watermark": str(wm)}})
+    _minimal_job(ctx)                                         # 没写 narration.json
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(d7, "duration_sec", lambda p: 400.0)
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)
+
+    assert len(calls) == 1                                    # 仍只跑 pass②(无旁白)
+    cmd = calls[0]
+    assert str(wm) in cmd
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "scale=140:-1" in fc
+    assert "[vsub]" in fc
+    assert not any("水印" in w for w in ctx.warnings)         # 文件齐全，不该有水印相关告警
+
+
+def test_run_watermark_enabled_missing_file_warns_and_skips_overlay(tmp_path, monkeypatch):
+    missing = tmp_path / "no-such-wm.png"
+    ctx = _ctx(tmp_path, {"p7": {"video_watermark": True, "watermark": str(missing)}})
+    _minimal_job(ctx)
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)
+
+    cmd = calls[0]
+    assert str(missing) not in cmd
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "scale=140" not in fc
+    assert any("水印" in w and "缺失" in w for w in ctx.warnings)
+    assert (ctx.job / OUTPUT).exists()                        # 没中止，照样出片
+
+
+def test_run_watermark_disabled_by_default_in_test_helper_matches_old_behavior(tmp_path, monkeypatch):
+    """default_watermark(assets/watermark_tr.png) 在仓库里是真实存在的文件——
+    _ctx() 默认关闭 video_watermark，防止这批既有测试被"水印默认开"意外牵连。"""
+    ctx = _ctx(tmp_path)
+    _minimal_job(ctx)
+
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(cmd)
+        Path(cmd[-1]).write_bytes(b"OUT")
+        class R:
+            returncode = 0
+            stderr = ""
+        return R()
+
+    monkeypatch.setattr(d7.subprocess, "run", fake_run)
+    run(ctx)
+
+    fc = calls[0][calls[0].index("-filter_complex") + 1]
+    assert "scale=140" not in fc
+    assert DEFAULT_WATERMARK not in "".join(calls[0])
+
+
+# ---------------------------------------------------------------------------
+# real-ffmpeg smoke — 水印真叠加(tiny 2s lavfi 源 + tiny png 水印)
+# ---------------------------------------------------------------------------
+
+def test_real_ffmpeg_smoke_with_watermark_overlay_produces_valid_video(tmp_path):
+    """真 ffmpeg 冒烟：2s 源片 + 极小间隔(0.5~0.6s)逼真触发好几次 TR/BR 切换，
+    验证 filter_complex 语法真的能被 ffmpeg 接受、渲染出正常的视频+音频。"""
+    _require_ffmpeg()
+    wm_dir = tmp_path / "wmassets"
+    wm_dir.mkdir()
+    wm_path = wm_dir / "wm.png"
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x224488:s=32x32",
+         "-frames:v", "1", str(wm_path)],
+        check=True,
+    )
+
+    ctx = _ctx(tmp_path, {"p7": {"video_watermark": True, "watermark": str(wm_path),
+                                  "wm_min_sec": 0.5, "wm_max_sec": 0.6}})
+    job = ctx.job
+    job.mkdir(parents=True)
+
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=5",
+         "-f", "lavfi", "-i", "sine=frequency=220", "-t", "2",
+         "-pix_fmt", "yuv420p", "-shortest", str(job / SOURCE)],
+        check=True,
+    )
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=110",
+         "-t", "2", str(job / BACKGROUND)],
+        check=True,
+    )
+    (job / SUBS).write_text(
+        "[Script Info]\n[Events]\nFormat: Layer, Start, End, Text\n", encoding="utf-8",
+    )
+    # 故意不写 narration.json -> 0 段旁白路径，同时验证水印在这个变体也能正确叠加
+
+    run(ctx)
+
+    out = job / OUTPUT
+    assert out.exists() and out.stat().st_size > 0
+    has_v, has_a, dur = _ffprobe_streams(out)
+    assert has_v and has_a
+    assert 1.0 <= dur <= 2.5
+    assert not any("水印" in w for w in ctx.warnings)          # 曲目齐全，不该有水印相关告警
 
 
 # ---------------------------------------------------------------------------
