@@ -109,6 +109,56 @@ def _wrap_title(title: str, max_per_line: int = 13) -> list[str]:
     return [title[:cut].strip(), title[cut:].strip()]
 
 
+def _metallic_text_layer(lines: list[str], font, canvas_w: int, canvas_h: int,
+                         y0: int, line_h: int) -> "Image.Image":
+    """金属质感标题层(用户给了参考图定的风格)：银白渐变字面 + 厚黑描边 +
+    错位模糊投影 + 轻微右倾(仿斜)。返回可直接 alpha_composite 的 RGBA 层。"""
+    from PIL import ImageFilter
+
+    layer = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+
+    # 投影层：黑字模糊后错位叠底
+    sh = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    dsh = ImageDraw.Draw(sh)
+    for i, ln in enumerate(lines):
+        dsh.text((canvas_w // 2 + 7, y0 + i * line_h + 9), ln, font=font,
+                 fill=(0, 0, 0, 200), anchor="mm", stroke_width=8, stroke_fill=(0, 0, 0, 200))
+    layer.alpha_composite(sh.filter(ImageFilter.GaussianBlur(5)))
+
+    # 描边层：厚黑描边(墨蓝黑,近似参考图)
+    outline = Image.new("RGBA", (canvas_w, canvas_h), (0, 0, 0, 0))
+    dol = ImageDraw.Draw(outline)
+    for i, ln in enumerate(lines):
+        dol.text((canvas_w // 2, y0 + i * line_h), ln, font=font,
+                 fill=(10, 14, 24, 255), anchor="mm", stroke_width=8, stroke_fill=(10, 14, 24, 255))
+    layer.alpha_composite(outline)
+
+    # 字面：银白金属纵向渐变(亮→灰→暗→回亮,模拟高光反射带)
+    mask = Image.new("L", (canvas_w, canvas_h), 0)
+    dmk = ImageDraw.Draw(mask)
+    for i, ln in enumerate(lines):
+        dmk.text((canvas_w // 2, y0 + i * line_h), ln, font=font, fill=255, anchor="mm")
+    stops = [(0.00, (252, 253, 255)), (0.38, (216, 222, 232)), (0.55, (128, 136, 150)),
+             (0.68, (238, 241, 246)), (1.00, (170, 176, 188))]
+    grad = Image.new("RGB", (1, canvas_h))
+    for y in range(canvas_h):
+        t = y / max(canvas_h - 1, 1)
+        for (t0, c0), (t1, c1) in zip(stops, stops[1:]):
+            if t0 <= t <= t1:
+                k = (t - t0) / max(t1 - t0, 1e-6)
+                grad.putpixel((0, y), tuple(int(a + (b - a) * k) for a, b in zip(c0, c1)))
+                break
+    face = grad.resize((canvas_w, canvas_h)).convert("RGBA")
+    face.putalpha(mask)
+    layer.alpha_composite(face)
+
+    # 轻微右倾(仿斜),贴近参考图的动感
+    shear = 0.10
+    return layer.transform(
+        (canvas_w, canvas_h), Image.AFFINE,
+        (1, shear, -shear * canvas_h * 0.5, 0, 1, 0), resample=Image.BICUBIC)
+
+
 def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
     """背景图(或纯色兜底) + 底部渐变 + 大字中文标题(自动缩字号) + 右上角水印面板。"""
     W, H = 1280, 720
@@ -131,14 +181,11 @@ def make_thumbnail(dest: Path, title: str, bg: Path, watermark: Path) -> None:
     shadow.putalpha(grad.resize((W, H)))
     img = Image.alpha_composite(img, shadow)
 
-    d = ImageDraw.Draw(img)
     lines = _wrap_title(title)                        # 长标题折两行，不丢字
-    font = _fit(TITLE_FONT, max(lines, key=len), int(W * 0.90), start=100, lo=40)
-    lh = font.size + 12
-    y0 = H - 88 - lh * (len(lines) - 1)               # 多行整体贴底部
-    for i, ln in enumerate(lines):
-        d.text((W // 2, y0 + i * lh), ln, font=font, fill=(255, 255, 255),
-               anchor="mm", stroke_width=6, stroke_fill=(8, 12, 26))
+    font = _fit(TITLE_FONT, max(lines, key=len), int(W * 0.86), start=100, lo=40)
+    lh = font.size + 14
+    y0 = H - 92 - lh * (len(lines) - 1)               # 多行整体贴底部
+    img.alpha_composite(_metallic_text_layer(lines, font, W, H, y0, lh))
 
     if watermark and Path(watermark).exists():
         try:
