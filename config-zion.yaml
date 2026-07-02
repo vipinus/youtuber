@@ -90,7 +90,7 @@ bilibili:                    # P7 T19：d9b_bilibili——YouTube 之外追加�
 youtube_en:                  # P7 T20：d9c_publish_en——英文原声原片(source.mp4)追加发布到第二账号
   enabled: true              # zion 生产开(secrets/token_en.json 已走过一次性授权，选第二个 Google 账号)
   token: secrets/token_en.json
-  client_secret: secrets/client_secret.json
+  client_secret: secrets/client_secret_en.json  # 独立OAuth客户端(SUMMIT项目,独立配额池)
   visibility: unlisted       # 英文源片频道:unlisted 起步(护栏#3:从不默认 public)
   playlist: "Space / NASA Archive"
 archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS

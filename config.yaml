@@ -72,7 +72,7 @@ youtube_en:                  # P7 T20：d9c_publish_en——把英文原声原�
   enabled: false             # 冷启动默认关(笔记本没走第二账号授权)；zion 生产开(见 config-zion.yaml)
   token: secrets/token_en.json      # 第二账号 token；`python -m src.auth_youtube secrets/token_en.json`
                              # 浏览器授权时选另一个 Google 账号即可(同一份 client_secret)
-  client_secret: secrets/client_secret.json
+  client_secret: secrets/client_secret_en.json  # 独立OAuth客户端(第二账号专用,与主频道分开的配额池)
   visibility: unlisted       # 英文源片频道:unlisted 起步(护栏#3:从不默认 public)
   playlist: "Space / NASA Archive"   # 上传成功后自动加入的播放列表标题；留空则不入列
 archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
