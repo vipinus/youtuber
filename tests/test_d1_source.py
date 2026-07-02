@@ -31,6 +31,16 @@ class FakeResp:
         yield self.content
 
 
+import pytest as _pytest
+
+@_pytest.fixture(autouse=True)
+def _assume_audio_ok(monkeypatch):
+    """旧测试的假下载写的是垃圾字节,真 ffprobe 必判无音轨——默认放行;
+    专测无音轨行为的用例自行覆写 _has_audio。"""
+    import src.stages.d1_source as _d1
+    monkeypatch.setattr(_d1, "_has_audio", lambda p: True)
+
+
 def _search_docs(*docs) -> dict:
     return {"response": {"docs": list(docs)}}
 
@@ -450,3 +460,48 @@ def test_does_not_skip_own_slug_source_json(tmp_path, monkeypatch):
 
     meta = read_json(ctx.job, d1.META_OUTPUT)
     assert meta["identifier"] == "same1"
+
+
+def test_looks_narrated_rejects_onboard_film():
+    """真跑踩坑:APOLLO 11 16MM ONBOARD FILM 是无音轨机载胶片。"""
+    from src.stages.d1_source import _looks_narrated
+    assert not _looks_narrated("APOLLO 11 16MM ONBOARD FILM")
+    assert not _looks_narrated("Gemini onboard camera footage")
+
+
+def test_run_skips_downloaded_file_without_audio(tmp_path, monkeypatch):
+    """下载后实测无音轨→删文件换下一部候选,不能带着哑片进 d2。"""
+    import src.stages.d1_source as d1
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+
+    docs = [
+        {"identifier": "silent-one", "title": "Great Space Movie A",
+         "licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/"},
+        {"identifier": "good-one", "title": "Great Space Movie B",
+         "licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/"},
+    ]
+    meta = {"files": [{"name": "m.mp4", "size": "5000000", "length": "600",
+                       "width": "1280", "height": "720"}],
+            "metadata": {"licenseurl": "http://creativecommons.org/publicdomain/zero/1.0/",
+                          "collection": ["nasa"]}}
+    monkeypatch.setattr(d1, "_search", lambda *a, **k: docs)
+    monkeypatch.setattr(d1, "_fetch_metadata", lambda ident: dict(meta))
+    monkeypatch.setattr(d1, "_download", lambda url, dest: dest.write_bytes(b"x" * 10))
+    monkeypatch.setattr(d1, "_has_audio", lambda p: "good-one" in captured.get("last", ""))
+    captured = {}
+    orig_download = d1._download
+    def spy_download(url, dest):
+        captured["last"] = url
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"x" * 10)
+    monkeypatch.setattr(d1, "_download", spy_download)
+
+    ctx = Ctx(slug="c", config=Config({"p7": {"collections": ["nasa"]}}),
+              root=tmp_path, llm=FakeLLM())
+    d1.run(ctx)
+    import json
+    src = json.loads((ctx.job / "source.json").read_text())
+    assert src["identifier"] == "good-one"        # 哑片被弃,选中第二部
+    assert any("无音轨" in w for w in ctx.warnings)

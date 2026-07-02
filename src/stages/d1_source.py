@@ -152,7 +152,21 @@ _NON_NARRATED = (
     "silent", "music only", "screensaver", "ambient", "ultra high definition",
     "ultra-high", "uhd", "4k", "8k", "flyover", "aerials", "raw footage",
     "resource reel", "stock footage", "highlight reel",   # NASA 给创作者的素材卷，故意无旁白
+    "onboard film", "onboard camera", "16mm",             # 机载胶片(真跑踩坑:阿波罗11机载胶片连音轨都没有)
 )
+
+
+def _has_audio(path: Path) -> bool:
+    """下载后实测有没有音轨——标题启发式永远猜不全(真跑:APOLLO 11 16MM ONBOARD
+    FILM 无任何音轨,走到 d2 提音频才炸)。ffprobe 数 audio 流,0 条即拒。"""
+    import subprocess
+
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=codec_type", "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True,
+    )
+    return proc.returncode == 0 and bool(proc.stdout.strip())
 
 
 def _looks_narrated(*texts: str) -> bool:
@@ -219,6 +233,11 @@ def run(ctx: Ctx) -> None:
 
         url = f"https://archive.org/download/{identifier}/{f['name']}"
         _download(url, ctx.job / OUTPUT)
+
+        if not _has_audio(ctx.job / OUTPUT):
+            ctx.warn(f"d1_source: {identifier} 下载后实测无音轨(纯胶片/无声素材)，弃用换下一部")
+            (ctx.job / OUTPUT).unlink(missing_ok=True)
+            continue
 
         write_json(ctx.job, META_OUTPUT, {
             "identifier": identifier,
