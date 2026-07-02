@@ -33,8 +33,8 @@ guardrails:
 p7:                        # P7 整片翻译管线：d1_source 选片参数(首题材 太空/NASA)
   query: "apollo OR spacecraft OR astronaut OR mars OR moon OR planet OR telescope OR space exploration"
   min_sec: 300              # 5min 下限：太短不算"整片纪录片"
-  max_sec: 1800             # 30min 上限：MVP 限时长，控制转录/下载耗时
-  max_bytes: 500000000      # ~500MB 单文件上限：整片要清晰但不下单片吃满带宽/磁盘的母版
+  max_sec: 28800            # 8h 上限(用户定):长纪录片/整场节目纳入
+  max_bytes: 2000000000     # 2GB(笔记本开发档)
   collections:               # 首题材=太空：只在 NASA 集合里选，既贴题又产权最干净。
     - nasa                   # 换题材时改这里(可用可信集合见 src/media._ARCHIVE_SEARCH_COLLECTIONS)
   bg_gain: 0.5              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
