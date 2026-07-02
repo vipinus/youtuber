@@ -90,12 +90,13 @@ def run(ctx: Ctx) -> None:
     source_url = (f"https://archive.org/details/{identifier}" if identifier
                   else source.get("source_url") or _DEFAULT_SOURCE_URL)
 
+    # 绝对路径:biliup 以 cookie_dir 为 cwd 跑,相对路径会解析错位(真跑踩坑:封面 No such file)
     cmd = [
-        str(biliup_bin), "upload", str(ctx.job / "video.mp4"),
+        str(biliup_bin), "upload", str((ctx.job / "video.mp4").resolve()),
         "--title", title,
         "--desc", meta.get("description", ""),
         "--tag", ",".join(tags),
-        "--cover", str(ctx.job / "thumb.jpg"),
+        "--cover", str((ctx.job / "thumb.jpg").resolve()),
         "--tid", str(tid),
         "--copyright", "2",
         "--source", source_url,

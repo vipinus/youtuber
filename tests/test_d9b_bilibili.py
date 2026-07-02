@@ -2,6 +2,7 @@
 一律 monkeypatch 掉，绝不真跑 biliup（也绝不真的 ssh/网络）。"""
 from __future__ import annotations
 
+from pathlib import Path
 import subprocess
 
 import pytest
@@ -310,3 +311,29 @@ def test_source_prefers_details_page(tmp_path, monkeypatch):
     d9b.run(ctx)
     i = seen["cmd"].index("--source")
     assert seen["cmd"][i+1] == "https://archive.org/details/SomeDoc123"
+
+
+def test_video_and_cover_paths_are_absolute(tmp_path, monkeypatch):
+    """biliup 以 cookie_dir 为 cwd,视频/封面必须绝对路径(真跑:相对路径封面 No such file)。"""
+    import src.stages.d9b_bilibili as d9b
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    from src.util.jobs import write_json
+    import subprocess as sp, os
+
+    seen = {}
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        class R: returncode = 0; stdout = "BV1xxxxxxxxx"; stderr = ""
+        return R()
+    monkeypatch.setattr(sp, "run", fake_run)
+    cookie_dir = tmp_path / "sec"; cookie_dir.mkdir(); (cookie_dir / "cookies.json").write_text("{}")
+    cfg = Config({"bilibili": {"enabled": True, "cookie_dir": str(cookie_dir), "biliup_bin": "/bin/biliup"}})
+    monkeypatch.chdir(tmp_path)                      # 模拟从别处启动
+    ctx = Ctx(slug="c", config=cfg, root=Path("jobs_rel"), llm=FakeLLM())
+    write_json(ctx.job, "meta.json", {"title": "t", "description": "d", "tags": ["x"]})
+    d9b.run(ctx)
+    assert os.path.isabs(seen["cmd"][2])                                   # video
+    ci = seen["cmd"].index("--cover")
+    assert os.path.isabs(seen["cmd"][ci + 1])                              # cover
