@@ -80,6 +80,7 @@ def run(ctx: Ctx) -> None:
     biliup_bin = Path(ctx.config.get("bilibili.biliup_bin", "~/bili-venv/bin/biliup")).expanduser()
     tid = ctx.config.get("bilibili.tid", 201)
     only_self = ctx.config.get("bilibili.only_self", True)
+    submit = ctx.config.get("bilibili.submit", "web")   # app 接口对新号风控严(21566),web 接口通过率高
     line = ctx.config.get("bilibili.line", "")
     timeout_sec = ctx.config.get("bilibili.timeout_sec", _DEFAULT_TIMEOUT_SEC)
 
@@ -101,6 +102,7 @@ def run(ctx: Ctx) -> None:
         "--copyright", "2",
         "--source", source_url,
         "--is-only-self", "1" if only_self else "0",
+        "--submit", str(submit),
     ]
     if line:
         cmd += ["--line", str(line)]
