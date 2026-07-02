@@ -15,6 +15,11 @@ youtube:
   provider: youtube        # youtube | fake
   client_secret: secrets/client_secret.json
   token: secrets/token.json
+remote:
+  provider: ssh            # ssh(真跑 zion GPU) | fake
+  host: fabric@zion        # ssh -o BatchMode=yes fabric@zion (key-based, NixOS, RTX 3070 Ti)
+  workdir: ~/p7-work       # zion 上的工作目录(脚本+音频+产物)
+  whisper_model: medium.en # 样片档(GPU faster-whisper);production 可切 large-v3
 video:
   resolution: 1080p
   fps: 30
