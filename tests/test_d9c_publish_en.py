@@ -272,10 +272,9 @@ def test_build_meta_handles_missing_fields_gracefully():
 
 def test_wrap_en_title_by_words():
     from src.stages.d9c_publish_en import _wrap_en_title
-    lines = _wrap_en_title("The Space Shuttle Narrated by William Shatner")
+    lines = _wrap_en_title("The Space Shuttle (Narrated by William Shatner)")
     assert len(lines) == 2
-    assert all(" " not in "".join(w) or True for w in lines)   # 无词中断裂
-    assert lines[0] == "The Space Shuttle Narrated"
+    assert " ".join(lines) == "The Space Shuttle (Narrated by William Shatner)"  # 一个词都不丢
     assert _wrap_en_title("Short") == ["Short"]
 
 

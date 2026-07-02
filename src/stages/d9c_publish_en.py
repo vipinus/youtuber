@@ -67,19 +67,17 @@ def _wrap_en_title(title: str, max_per_line: int = 26) -> list[str]:
     words = (title or "").split()
     if not words:
         return [""]
-    lines, cur = [], ""
-    for w in words:
+    # 第一行贪心装到 max_per_line,剩余全部进第二行(字号自动缩,绝不丢词——
+    # 中文封面当初 title[:14] 丢词的教训,英文这里不再犯)
+    cur, i = "", 0
+    for i, w in enumerate(words):
         cand = f"{cur} {w}".strip()
         if len(cand) > max_per_line and cur:
-            lines.append(cur)
-            cur = w
-            if len(lines) == 2:
-                break
-        else:
-            cur = w if not cur else cand
-    if cur and len(lines) < 2:
-        lines.append(cur)
-    return lines[:2]
+            break
+        cur = cand
+        i += 1
+    rest = " ".join(words[i:]).strip()
+    return [cur, rest] if rest else [cur]
 
 
 def make_en_thumbnail(dest: Path, title: str, bg: Path, watermark: Path,
