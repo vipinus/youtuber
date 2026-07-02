@@ -34,6 +34,7 @@ p7:                        # P7 整片翻译管线：d1_source 选片参数(首�
   max_bytes: 500000000      # ~500MB 单文件上限：整片要清晰但不下单片吃满带宽/磁盘的母版
   collections:               # 首题材=太空：只在 NASA 集合里选，既贴题又产权最干净。
     - nasa                   # 换题材时改这里(可用可信集合见 src/media._ARCHIVE_SEARCH_COLLECTIONS)
+  bg_gain: 0.5              # d7_assemble：no_vocals 背景床音量(sidechaincompress duck 前)，0~1
 publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
   visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
