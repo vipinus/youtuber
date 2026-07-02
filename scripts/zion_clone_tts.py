@@ -166,9 +166,13 @@ def _slice_reference(
     start = float(ref_seg.get("start", 0.0))
     end = float(ref_seg.get("end", 0.0))
     out_path = tmp_dir / f"ref_{ref_id:03d}.wav"
+    # 参考切片先洗一遍再喂 F5(用户实听:克隆语音里带出参考的底噪/音乐残留——
+    # F5 会连声学环境一起复刻)。highpass 去低频音乐轰鸣 + afftdn FFT 降噪。
     subprocess.run(
         ["ffmpeg", "-y", "-i", str(vocals), "-ss", f"{start:.3f}", "-to", f"{end:.3f}",
-         "-ac", "1", "-ar", "24000", str(out_path)],
+         "-ac", "1", "-ar", "24000",
+         "-af", "highpass=f=90,afftdn=nr=12:nf=-32",
+         str(out_path)],
         check=True, capture_output=True,
     )
     cache[ref_id] = out_path
