@@ -27,6 +27,7 @@ from pathlib import Path
 
 from src.context import Ctx
 from src.util.jobs import write_json
+from src.util.registry import registry_path
 
 OUTPUT = "archive.json"
 INPUT = "publish.json"
@@ -133,6 +134,16 @@ def run(ctx: Ctx) -> None:
     trimmed: list[str] = []
     if ctx.config.get("archive.trim_local", True):
         trimmed = _trim_local(ctx.job)
+
+    # P7 T16：登记表（jobs_root/published.json）也备份一份到 NAS 根——
+    # 本地文件才是权威副本，这里只是灾备，失败绝不影响本次归档已经
+    # 成功这一事实。
+    src_registry = registry_path(ctx.root)
+    if src_registry.is_file():
+        try:
+            _copy_file(src_registry, archive_root / src_registry.name)
+        except OSError as e:
+            ctx.warn(f"{ctx.slug}: 登记表备份到 NAS 失败({type(e).__name__}: {e})，不影响本次归档")
 
     write_json(ctx.job, OUTPUT, {
         "status": "archived",

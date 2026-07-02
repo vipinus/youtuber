@@ -5,6 +5,7 @@ from pathlib import Path
 from src.context import Ctx
 from src.media import _ARCHIVE_SEARCH_COLLECTIONS, _is_blocked, _norm_license
 from src.util.jobs import write_json
+from src.util.registry import in_flight_identifiers, published_identifiers
 
 OUTPUT = "source.mp4"
 META_OUTPUT = "source.json"
@@ -171,9 +172,18 @@ def run(ctx: Ctx) -> None:
 
     docs = _search(query, collections)
 
+    # P7 T16：登记表去重——已发布过的、以及同批其它 job 已下载但还没发布完
+    # 的（source.json 存在），一律跳过，不然同一条 query 每次都会重挑到
+    # 同一部片（downloads desc 排序几乎不变）。
+    skip_ids = published_identifiers(ctx.root) | in_flight_identifiers(ctx.root, ctx.slug)
+
     for d in docs:
         identifier = d.get("identifier")
         if not identifier:
+            continue
+
+        if identifier in skip_ids:
+            ctx.warn(f"d1_source: {identifier} 已发布/在途，跳过")
             continue
 
         try:

@@ -2,8 +2,9 @@ from src.config import Config
 from src.llm import FakeLLM
 from src.context import Ctx
 from src.util.jobs import write_json, read_json
+from src.util.registry import load_published
 from src.youtube import FakeUploader
-from src.stages.s9_publish import run, OUTPUT, INPUT
+from src.stages.s9_publish import run, OUTPUT, INPUT, SOURCE_META
 
 
 def _ctx(tmp_path, cfg):
@@ -124,3 +125,64 @@ def test_run_playlist_failure_keeps_video_id_and_warns(tmp_path, monkeypatch):
     assert "auth_youtube" in pub["playlist_error"]      # 重新授权提示
     assert ctx.warnings
     assert any("auth_youtube" in w for w in ctx.warnings)
+
+
+# ---------------------------------------------------------------------------
+# P7 T16：上传成功后登记进已发布表（doc 管线专属）
+# ---------------------------------------------------------------------------
+
+def test_run_registers_published_when_source_json_present(tmp_path):
+    """doc 管线（有 source.json）上传成功后要登记进 jobs_root/published.json，
+    供 d1_source 选片去重。"""
+    cfg = Config({"youtube": {"provider": "fake"},
+                  "publish": {"auto_upload": True, "visibility": "private"}})
+    ctx = _ctx(tmp_path, cfg)
+    write_json(ctx.job, SOURCE_META, {
+        "identifier": "nasadoc42", "title": "NASA Space Documentary",
+        "license": "public-domain",
+    })
+
+    run(ctx)
+
+    entries = load_published(ctx.root)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["identifier"] == "nasadoc42"
+    assert entry["title"] == "NASA Space Documentary"
+    assert entry["videoId"] == "FAKE12345"
+    assert entry["slug"] == ctx.slug
+    assert entry["published_at"]                  # 只断言"存在"，不断言精确时间戳
+
+
+def test_run_does_not_register_when_no_source_json(tmp_path):
+    """原始 s1-s9 管线没有 source.json——不该往 published.json 里写任何东西。"""
+    cfg = Config({"youtube": {"provider": "fake"},
+                  "publish": {"auto_upload": True, "visibility": "private"}})
+    ctx = _ctx(tmp_path, cfg)
+    assert not (ctx.job / SOURCE_META).exists()    # _ctx() 默认不建 source.json
+
+    run(ctx)
+
+    assert load_published(ctx.root) == []
+    assert not (ctx.root / "published.json").exists()
+
+
+def test_run_registry_write_failure_still_writes_publish_json_and_warns(tmp_path, monkeypatch):
+    """登记表写入失败绝不能作废已成功的上传——publish.json 照常写，只 warn。"""
+    cfg = Config({"youtube": {"provider": "fake"},
+                  "publish": {"auto_upload": True, "visibility": "private"}})
+    ctx = _ctx(tmp_path, cfg)
+    write_json(ctx.job, SOURCE_META, {"identifier": "nasadoc42", "title": "T"})
+
+    def boom(jobs_root, entry):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr("src.stages.s9_publish.append_published", boom)
+
+    run(ctx)
+
+    pub = read_json(ctx.job, OUTPUT)
+    assert pub["videoId"] == "FAKE12345"           # 上传结果没丢
+    assert ctx.warnings
+    assert any("登记已发布表失败" in w for w in ctx.warnings)
+    assert load_published(ctx.root) == []          # 登记确实没成功，但不影响上面的断言

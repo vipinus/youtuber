@@ -333,3 +333,120 @@ def test_looks_narrated_rejects_resource_reels():
     assert not _looks_narrated("NASA Orion Resource Reel")
     assert not _looks_narrated("Artemis stock footage collection")
     assert _looks_narrated("ISS Benefits for Humanity")      # 真解说系列片放行
+
+
+# ---------------------------------------------------------------------------
+# P7 T16：登记表去重 —— 已发布/在途 identifier 跳过，挑下一个候选
+# ---------------------------------------------------------------------------
+
+def test_skips_already_published_candidate_and_picks_next(tmp_path, monkeypatch):
+    """published.json 里已经登记过的 identifier 不该被重新选中——这正是用户
+    投诉的"同一条 query 反复重挑同一部片"问题。也校验 metadata 都没去取
+    （在拿 metadata 之前就该跳过，不浪费一次 HTTP 请求）。"""
+    import src.stages.d1_source as d1
+    from src.util.registry import append_published
+
+    search_docs = [
+        {"identifier": "already_done", "title": "Old Pick"},
+        {"identifier": "fresh1", "title": "Fresh Doc"},
+    ]
+    metadata = {
+        "already_done": {
+            "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+                         "collection": ["nasa"], "title": "Old Pick"},
+            "files": [{"name": "already_done.mp4", "size": "300000", "length": "600",
+                       "width": "640", "height": "480"}],
+        },
+        "fresh1": {
+            "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+                         "collection": ["nasa"], "title": "Fresh Doc"},
+            "files": [{"name": "fresh1.mp4", "size": "300000", "length": "600",
+                       "width": "640", "height": "480"}],
+        },
+    }
+    _install_fake_get(monkeypatch, search_docs, metadata)
+
+    fetched_ids: list[str] = []
+    real_fetch_metadata = d1._fetch_metadata
+
+    def tracking_fetch_metadata(identifier):
+        fetched_ids.append(identifier)
+        return real_fetch_metadata(identifier)
+
+    monkeypatch.setattr(d1, "_fetch_metadata", tracking_fetch_metadata)
+
+    ctx = _ctx(tmp_path)
+    append_published(ctx.root, {
+        "identifier": "already_done", "title": "Old Pick", "videoId": "V1",
+        "slug": "some-other-job", "published_at": "2026-01-01T00:00:00+00:00",
+    })
+
+    d1.run(ctx)
+
+    meta = read_json(ctx.job, d1.META_OUTPUT)
+    assert meta["identifier"] == "fresh1"
+    assert any("已发布/在途" in w for w in ctx.warnings)
+    assert fetched_ids == ["fresh1"]           # already_done 在拿 metadata 前就被跳过了
+
+
+def test_skips_in_flight_sibling_job_candidate(tmp_path, monkeypatch):
+    """同批另一个 job 目录已经下载了同一部片（source.json 存在但还没发布完），
+    也不该被再挑一次——防止并行/连续跑 case 撞到同一部片。"""
+    import src.stages.d1_source as d1
+    from src.util.jobs import write_json
+
+    search_docs = [
+        {"identifier": "in_flight1", "title": "Being Processed"},
+        {"identifier": "fresh2", "title": "Fresh Doc Two"},
+    ]
+    metadata = {
+        "in_flight1": {
+            "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+                         "collection": ["nasa"], "title": "Being Processed"},
+            "files": [{"name": "in_flight1.mp4", "size": "300000", "length": "600",
+                       "width": "640", "height": "480"}],
+        },
+        "fresh2": {
+            "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+                         "collection": ["nasa"], "title": "Fresh Doc Two"},
+            "files": [{"name": "fresh2.mp4", "size": "300000", "length": "600",
+                       "width": "640", "height": "480"}],
+        },
+    }
+    _install_fake_get(monkeypatch, search_docs, metadata)
+
+    ctx = _ctx(tmp_path)             # slug="doc1"
+    sibling = tmp_path / "doc2"
+    write_json(sibling, d1.META_OUTPUT, {"identifier": "in_flight1", "title": "Being Processed"})
+
+    d1.run(ctx)
+
+    meta = read_json(ctx.job, d1.META_OUTPUT)
+    assert meta["identifier"] == "fresh2"
+    assert any("已发布/在途" in w for w in ctx.warnings)
+
+
+def test_does_not_skip_own_slug_source_json(tmp_path, monkeypatch):
+    """in_flight 排重要排除自己这个 job（重跑同一个 slug 时不能被自己的
+    上一次 source.json 拦住）。"""
+    import src.stages.d1_source as d1
+    from src.util.jobs import write_json
+
+    search_docs = [{"identifier": "same1", "title": "Same Doc"}]
+    metadata = {
+        "same1": {
+            "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
+                         "collection": ["nasa"], "title": "Same Doc"},
+            "files": [{"name": "same1.mp4", "size": "300000", "length": "600",
+                       "width": "640", "height": "480"}],
+        },
+    }
+    _install_fake_get(monkeypatch, search_docs, metadata)
+
+    ctx = _ctx(tmp_path)             # slug="doc1"
+    write_json(ctx.job, d1.META_OUTPUT, {"identifier": "same1", "title": "Same Doc"})
+
+    d1.run(ctx)                      # 不该因为自己的 source.json 而把 same1 当"在途"跳过
+
+    meta = read_json(ctx.job, d1.META_OUTPUT)
+    assert meta["identifier"] == "same1"

@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from src.context import Ctx
 from src.util.jobs import read_json, write_json
+from src.util.registry import append_published
 from src.youtube import get_uploader
 
 OUTPUT = "publish.json"
 INPUT = "meta.json"
+SOURCE_META = "source.json"        # d1_source.META_OUTPUT——存在即 doc 管线
 
 
 def run(ctx: Ctx) -> None:
@@ -40,5 +44,20 @@ def run(ctx: Ctx) -> None:
                     if "insufficient" in msg.lower() else "")
             result["playlist_error"] = msg + hint
             ctx.warn(f"{ctx.slug}: 加入播放列表 {playlist_title!r} 失败：{msg}{hint}")
+
+    if result.get("videoId") and (ctx.job / SOURCE_META).is_file():
+        # P7 T16：doc 管线（有 source.json）上传成功后登记进已发布表，供
+        # d1_source 选片时去重；原始 s1-s9 管线没有 source.json，静默跳过。
+        try:
+            source = read_json(ctx.job, SOURCE_META)
+            append_published(ctx.root, {
+                "identifier": source.get("identifier"),
+                "title": source.get("title"),
+                "videoId": result["videoId"],
+                "slug": ctx.slug,
+                "published_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as e:  # noqa: BLE001 — 登记失败不能作废已成功的上传
+            ctx.warn(f"{ctx.slug}: 登记已发布表失败({type(e).__name__}: {e})，不影响本次上传结果")
 
     write_json(ctx.job, OUTPUT, result)

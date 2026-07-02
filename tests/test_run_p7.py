@@ -315,3 +315,15 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     assert (dest / "video.mp4").stat().st_size == video.stat().st_size
     assert (dest / "meta.json").exists()
     assert archive["trimmed"] == []          # trim_local=False，本地一律没删
+
+    # P7 T16：登记表——发布成功后 jobs_root/published.json 记下了这一集，
+    # 供下次 run 的 d1_source 去重，防止同一条 query 反复重挑同一部片。
+    published = read_json(tmp_path, "published.json")
+    assert len(published) == 1
+    entry = published[0]
+    assert entry["identifier"] == "nasadoc1"
+    assert entry["videoId"] == "FAKE12345"
+    assert entry["slug"] == "nasa-e2e"
+    assert entry["published_at"]
+    # 归档也把登记表备份到了（假）NAS 根目录
+    assert (tmp_path / "nas_archive" / "published.json").exists()

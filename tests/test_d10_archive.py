@@ -215,3 +215,47 @@ def test_size_mismatch_marks_failed_and_does_not_trim(tmp_path, monkeypatch):
     assert (ctx.job / "source.mp4").exists()
     assert (ctx.job / "narration").is_dir()
     assert ctx.warnings
+
+
+# ---------------------------------------------------------------------------
+# 7. P7 T16：已发布登记表也备份一份到 NAS 根目录
+# ---------------------------------------------------------------------------
+
+def test_published_registry_copied_to_archive_root_on_success(tmp_path):
+    from src.util.jobs import write_json as _write_json
+
+    archive_root = tmp_path / "nas"
+    archive_root.mkdir()
+    ctx = _make_job(tmp_path, Config({"archive": {"dir": str(archive_root)}}))
+    # jobs_root/published.json 是 ctx.root 层级的文件，不是 job 目录里的
+    _write_json(ctx.root, "published.json", [
+        {"identifier": "id1", "title": "T1", "videoId": "V1", "slug": "c",
+         "published_at": "2026-01-01T00:00:00+00:00"},
+    ])
+
+    run(ctx)
+
+    arc = read_json(ctx.job, OUTPUT)
+    assert arc["status"] == "archived"
+
+    backup = archive_root / "published.json"
+    assert backup.exists()
+    assert read_json(archive_root, "published.json") == [
+        {"identifier": "id1", "title": "T1", "videoId": "V1", "slug": "c",
+         "published_at": "2026-01-01T00:00:00+00:00"},
+    ]
+
+
+def test_missing_published_registry_does_not_fail_archive(tmp_path):
+    """jobs_root/published.json 压根不存在（原始管线/首次跑）——不该报错，
+    也不该在 NAS 上凭空造出一个空文件。"""
+    archive_root = tmp_path / "nas"
+    archive_root.mkdir()
+    ctx = _make_job(tmp_path, Config({"archive": {"dir": str(archive_root)}}))
+    assert not (ctx.root / "published.json").exists()
+
+    run(ctx)
+
+    arc = read_json(ctx.job, OUTPUT)
+    assert arc["status"] == "archived"
+    assert not (archive_root / "published.json").exists()
