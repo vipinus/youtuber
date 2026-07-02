@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import ast
 import inspect
+import json
+import subprocess
+from pathlib import Path
 
 from src.config import Config
 from src.context import Ctx
@@ -195,3 +198,147 @@ def test_fake_provider_never_touches_edge_tts(tmp_path, monkeypatch):
 
     out = read_json(ctx.job, d4.OUTPUT)
     assert len(out["segments"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# P7 T17 — 声音克隆配音(tts.provider=="clone")：remote(fake) 批量克隆整部片，
+# 这里核对逐段落地 + 缺失回退。remote=fake 全程离线，不 ssh/不触网。
+# ---------------------------------------------------------------------------
+
+def _ctx_clone(tmp_path, extra: dict | None = None) -> Ctx:
+    data = {
+        "remote": {"provider": "fake"},
+        "tts": {"provider": "clone", "fallback_provider": "fake",
+                "voice": "zh-CN-YunyangNeural", "voice_female": "zh-CN-XiaoxiaoNeural"},
+    }
+    if extra:
+        data.update(extra)
+    return Ctx(slug="doc1", config=Config(data), root=tmp_path, llm=FakeLLM())
+
+
+def _write_dummy_vocals(ctx: Ctx) -> None:
+    (ctx.job / "vocals.mp3").write_bytes(b"\x00")   # FakeRemoteGPU.clone_synthesize 不读内容
+
+
+class _SkippingCloneRemote:
+    """跟 FakeRemoteGPU.clone_synthesize 行为一致，但对 skip_ids 里的段故意不
+    产出 wav——模拟真实 F5 单段推理失败（remote 侧已按计划跳过、只打印 warn）。"""
+
+    def __init__(self, skip_ids: set[int]):
+        self.skip_ids = skip_ids
+
+    def clone_synthesize(self, zh_script: Path, vocals: Path, out_dir: Path) -> Path:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        data = json.loads(Path(zh_script).read_text(encoding="utf-8"))
+        for seg in data.get("segments", []):
+            zh = (seg.get("zh") or "").strip()
+            if not zh:
+                continue
+            seg_id = int(seg.get("id", 0))
+            if seg_id in self.skip_ids:
+                continue
+            out_path = out_dir / f"n{seg_id:03d}.wav"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                 "-t", "1", str(out_path)],
+                check=True, capture_output=True,
+            )
+        return out_dir
+
+
+def test_clone_mode_writes_clone_voice_manifest_entries(tmp_path):
+    ctx = _ctx_clone(tmp_path)
+    _write_zh_script(ctx, [
+        {"id": 0, "start": 0.0, "end": 1.0, "en": "Hello", "zh": "你好", "gender": "male"},
+        {"id": 1, "start": 1.0, "end": 2.0, "en": "World", "zh": "世界", "gender": "female"},
+    ])
+    _write_dummy_vocals(ctx)
+
+    d4.run(ctx)
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    assert len(out["segments"]) == 2
+    for seg in out["segments"]:
+        assert seg["voice"] == "clone"
+        assert seg["file"].endswith(".wav")
+        assert seg["tts_dur"] > 0
+        p = ctx.job / seg["file"]
+        assert p.exists()
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", str(p)],
+            capture_output=True, text=True, check=True,
+        )
+        assert "audio" in probe.stdout
+    assert ctx.warnings == []
+
+
+def test_clone_mode_missing_wav_falls_back_to_fake_engine_and_warns(tmp_path, monkeypatch):
+    ctx = _ctx_clone(tmp_path)
+    _write_zh_script(ctx, [
+        {"id": 0, "start": 0.0, "end": 1.0, "en": "Hello", "zh": "你好", "gender": "male"},
+        {"id": 1, "start": 1.0, "end": 2.0, "en": "World", "zh": "世界", "gender": "female"},
+    ])
+    _write_dummy_vocals(ctx)
+
+    monkeypatch.setattr(d4, "get_remote", lambda config: _SkippingCloneRemote({1}))
+
+    d4.run(ctx)
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    voices = {s["id"]: s for s in out["segments"]}
+
+    # id=0 正常克隆
+    assert voices[0]["voice"] == "clone"
+    assert voices[0]["file"] == "narration/n000.wav"
+    assert (ctx.job / voices[0]["file"]).exists()
+
+    # id=1 克隆缺 wav -> 回退 fake 引擎，按性别选中 female 音色，文件落地且完整
+    assert voices[1]["voice"] == "zh-CN-XiaoxiaoNeural"
+    assert voices[1]["file"] == "narration/n001.mp3"
+    assert (ctx.job / voices[1]["file"]).exists()
+    assert voices[1]["tts_dur"] > 0
+    assert voices[1]["zh"] == "世界"
+
+    assert any("段 1" in w and "克隆配音缺失" in w for w in ctx.warnings)
+
+
+def test_clone_mode_fallback_provider_default_is_edge(tmp_path):
+    """未显式配置 tts.fallback_provider 时默认落 edge（跟非 clone 模式默认引擎一致）。"""
+    ctx = _ctx_clone(tmp_path, extra={"tts": {"provider": "clone"}})
+    assert ctx.config.get("tts.fallback_provider", "edge") == "edge"
+
+
+def test_clone_mode_fallback_fake_never_touches_edge_tts(tmp_path, monkeypatch):
+    """clone 模式 + fallback_provider=fake 时，缺失段回退也绝不该导入 edge_tts
+    （离线测试不触网的关键护栏，跟非 clone 分支的同名护栏对齐）。"""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "edge_tts", None)   # import edge_tts 会当场炸
+    ctx = _ctx_clone(tmp_path)
+    _write_zh_script(ctx, [{"id": 0, "start": 0.0, "end": 1.0, "en": "Hi", "zh": "你好"}])
+    _write_dummy_vocals(ctx)
+
+    monkeypatch.setattr(d4, "get_remote", lambda config: _SkippingCloneRemote({0}))
+
+    d4.run(ctx)          # must not raise / must not import edge_tts
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    assert out["segments"][0]["voice"] != "clone"
+    assert (ctx.job / out["segments"][0]["file"]).exists()
+
+
+def test_clone_mode_empty_zh_still_skipped_and_warned(tmp_path):
+    ctx = _ctx_clone(tmp_path)
+    _write_zh_script(ctx, [
+        {"id": 0, "start": 0.0, "end": 1.0, "en": "Hello", "zh": "你好"},
+        {"id": 1, "start": 1.0, "end": 2.0, "en": "", "zh": ""},
+    ])
+    _write_dummy_vocals(ctx)
+
+    d4.run(ctx)
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    ids = [s["id"] for s in out["segments"]]
+    assert ids == [0]
+    assert any("1/2" in w for w in ctx.warnings)

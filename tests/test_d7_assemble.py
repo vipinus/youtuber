@@ -119,6 +119,23 @@ def test_build_narration_cmd_inputs_in_segment_order(tmp_path):
     assert cmd[cmd.index("-map") + 1] == "[narp]"
 
 
+def test_build_narration_cmd_accepts_wav_files_from_clone_mode(tmp_path):
+    """P7 T17：声音克隆配音(d4_tts tts.provider=="clone")产出的旁白文件是
+    .wav，不是 .mp3。build_narration_cmd 只按 manifest 的 "file" 字段原样拼
+    -i，不看/不假设扩展名——ffmpeg 按内容自动探测格式，wav 一样正常工作。"""
+    segs = [
+        {"id": 0, "start": 0.0, "file": "narration/n000.wav"},
+        {"id": 1, "start": 2.0, "file": "narration/n001.wav"},
+    ]
+    out = tmp_path / NARRATION_TRACK
+    cmd = build_narration_cmd(tmp_path, segs, 5.0, out)
+    assert cmd[0] == "ffmpeg"
+    assert cmd.count("-i") == 2
+    assert str(tmp_path / "narration/n000.wav") in cmd
+    assert str(tmp_path / "narration/n001.wav") in cmd
+    assert cmd[-1] == str(out)
+
+
 # ---------------------------------------------------------------------------
 # build_assemble_cmd — pass②：video + (bg duck + narration) + subs
 # ---------------------------------------------------------------------------

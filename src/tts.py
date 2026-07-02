@@ -65,10 +65,16 @@ class EdgeTTS:
         return asyncio.run(_go())
 
 
-def get_tts(config: Config, voice: str | None = None) -> TTSEngine:
+def get_tts(config: Config, voice: str | None = None, provider: str | None = None) -> TTSEngine:
     """`voice` 可选覆盖 config 里的 tts.voice——P7 T9 性别匹配配音用它按段选
-    男声/女声引擎。FakeTTS 分支忽略 voice（离线测试始终确定性、不触网）。"""
-    provider = config.get("tts.provider", "edge")
+    男声/女声引擎。FakeTTS 分支忽略 voice（离线测试始终确定性、不触网）。
+
+    `provider` 可选覆盖 config 里的 tts.provider——P7 T17 克隆配音
+    (tts.provider=="clone") 单段合成失败时，d4_tts 要回退到一个"普通"引擎
+    (edge/fake，由 tts.fallback_provider 指定)，但此时 config 里的
+    tts.provider 是 "clone"（get_tts 不认识这个值，会走到下面的 raise）；
+    显式传 provider 就能绕开 config 里的 "clone"，直接拿到 edge/fake 引擎。"""
+    provider = provider or config.get("tts.provider", "edge")
     if provider == "fake":
         return FakeTTS()
     if provider == "edge":

@@ -13,8 +13,10 @@ memory `zion-gpu-asr-setup`）。
      = {"duration": float, "segments": [{"start","end","text","gender"}, ...]}
   2. demucs（`--two-stems vocals --mp3 -d cpu`；这台机器 GPU cuDNN 与 demucs
      不兼容，禁止 `-d cuda`）直接对 <audio_in> 分离 → 把产出的 no_vocals.mp3
-     复制到 <out_dir>/no_vocals.mp3（vocals.mp3 留在 demucs 的临时输出目录，
-     只用来算基频，不落 out_dir）
+     和 vocals.mp3 都复制到 <out_dir>（vocals.mp3 原本只用来算基频，P7 T17
+     追加：它还是下游 zion_clone_tts.py 克隆配音的参考音色来源——每个说话人
+     的中文旁白要用他/她自己的原声切片当 F5-TTS 参考，所以必须落 out_dir 供
+     d4_tts 阶段拉去用，不能再只留在 demucs 的临时输出目录里）
   3. P7 T9：用 demucs 分出的 vocals（干净人声，无背景音乐/音效干扰）算每段
      中位基频（torchaudio.functional.detect_pitch_frequency），按阈值分类
      "male"/"female"/None（不确定就 null，绝不瞎猜——下游 d4_tts 拿它按段
@@ -185,6 +187,7 @@ def main(argv: list[str]) -> int:
 
     vocals, no_vocals = separate(audio_in, work_dir)
     shutil.copyfile(no_vocals, out_dir / "no_vocals.mp3")
+    shutil.copyfile(vocals, out_dir / "vocals.mp3")  # P7 T17：克隆配音参考音色来源
 
     # P7 T9：性别检测是锦上添花，不是主产物——万一 torch/torchaudio 或某段
     # 音频触发意外异常，绝不能让整条转录+去人声的核心产物报废（同 d8 SDXL

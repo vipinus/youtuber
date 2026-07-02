@@ -23,6 +23,14 @@ subprocess 在本机（此时就是 zion）经 `~/gpu-py` 跑 scripts/zion_gpu_a
 zion_sdxl.py，脚本读写的 out_dir/out_path 就是最终产物落点，不需要再 scp 拉回。
 `remote.provider: local` 选它（见 config-zion.yaml）；笔记本模式（`ssh`）完全
 不受影响，两套并存。
+
+P7 T17 追加了 `clone_synthesize`：F5-TTS one-shot 跨语种声音克隆配音——每个
+说话人的中文旁白用他/她自己的原声（demucs 分离出的 vocals.mp3 切片）当参考
+音色。zion 侧配方（已在 zion 上真实验通，用户认可克隆质量）：新 venv
+`~/clone-venv` 装了 f5-tts，同 gpu-py 的坑——必须经 `~/clone-py` wrapper 调用
+（先设好 LD_LIBRARY_PATH 再 exec clone-venv python），不能直接跑裸 venv
+python。zion 侧脚本见 scripts/zion_clone_tts.py（本模块负责部署它 +
+编排/subprocess 调用，跟 transcribe_separate/generate_image 手法一致）。
 """
 from __future__ import annotations
 
@@ -36,6 +44,7 @@ from src.config import Config
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ZION_SCRIPT_NAME = "zion_gpu_asr.py"
 _ZION_SDXL_SCRIPT_NAME = "zion_sdxl.py"
+_ZION_CLONE_SCRIPT_NAME = "zion_clone_tts.py"
 
 
 def _run_checked(
@@ -64,16 +73,18 @@ def _run_checked(
 class RemoteGPU(Protocol):
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict: ...
     def generate_image(self, prompt: str, out_path: Path) -> Path: ...
+    def clone_synthesize(self, zh_script: Path, vocals: Path, out_dir: Path) -> Path: ...
 
 
 class FakeRemoteGPU:
-    """离线确定性：写一份罐头 transcript.json + 一段真正可解码的静音 no_vocals
-    音频到 out_dir，不 ssh/不触网。
+    """离线确定性：写一份罐头 transcript.json + 两段真正可解码的静音
+    no_vocals/vocals 音频到 out_dir，不 ssh/不触网。
 
     音频必须是真正可解码的文件（而非占位字节）——参照 src/media.FakeMedia 的
     教训：下游若拿到非法数据会在 ffmpeg/ffprobe 处反复重试或崩溃，使
     remote=fake 无法离线跑通整条流水线。这里用 ffmpeg 的 lavfi anullsrc 现场
-    生成 1 秒静音 mp3。
+    生成 1 秒静音 mp3。P7 T17：vocals.mp3 是下游 clone_synthesize 的参考音色
+    来源（真实 zion 侧是 demucs 干声轨），罐头版一样要落地、可解码。
     """
 
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict:
@@ -100,7 +111,37 @@ class FakeRemoteGPU:
              "-t", "1", str(no_vocals_path)],
             check=True, capture_output=True,
         )
-        return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+        vocals_path = out_dir / "vocals.mp3"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+             "-t", "1", str(vocals_path)],
+            check=True, capture_output=True,
+        )
+        return {
+            "transcript": transcript_path,
+            "no_vocals": no_vocals_path,
+            "vocals": vocals_path,
+        }
+
+    def clone_synthesize(self, zh_script: Path, vocals: Path, out_dir: Path) -> Path:
+        """离线确定性：不跑 F5-TTS，只按 zh_script 里每个非空 zh 段写一份真正
+        可解码的 1 秒静音 wav `n{id:03d}.wav`——供 d4_tts 的 clone 分支离线测试
+        「narration 文件存在 + 可 ffprobe」这条路径，不 ssh/不触网。"""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        import json
+        data = json.loads(Path(zh_script).read_text(encoding="utf-8"))
+        for seg in data.get("segments", []):
+            zh = (seg.get("zh") or "").strip()
+            if not zh:
+                continue
+            seg_id = int(seg.get("id", 0))
+            out_path = out_dir / f"n{seg_id:03d}.wav"
+            subprocess.run(
+                ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                 "-t", "1", str(out_path)],
+                check=True, capture_output=True,
+            )
+        return out_dir
 
     def generate_image(self, prompt: str, out_path: Path) -> Path:
         """离线确定性：现场用 Pillow 画一张真正可解码的 1280x720 PNG（纵向渐变），
@@ -123,7 +164,7 @@ class FakeRemoteGPU:
 
 class SSHRemoteGPU:
     """SSH/scp 编排 zion：推音频上去、经 `~/gpu-py` 跑 zion_gpu_asr.py、拉
-    transcript.json + no_vocals.mp3 回本地 out_dir。
+    transcript.json + no_vocals.mp3 + vocals.mp3 回本地 out_dir。
 
     构造阶段不做任何网络调用——只在 transcribe_separate 真正被调用时才
     ssh/scp，保证「import/构造」在离线单测里绝对安全。
@@ -134,34 +175,40 @@ class SSHRemoteGPU:
         host: str = "fabric@zion",
         workdir: str = "~/p7-work",
         wrapper: str = "~/gpu-py",
+        clone_wrapper: str = "~/clone-py",
         whisper_model: str = "medium.en",
         script_name: str = _ZION_SCRIPT_NAME,
         timeout_sec: int = 1200,
+        clone_timeout_sec: int = 7200,
     ):
         self.host = host
         self.workdir = workdir
         self.wrapper = wrapper
+        self.clone_wrapper = clone_wrapper     # P7 T17：F5-TTS 克隆配音走独立 wrapper(~/clone-py)
         self.whisper_model = whisper_model
         self.script_name = script_name
         self.timeout_sec = timeout_sec         # 卡死的 zion(掉网/驱动挂)不能无限挂住管线
+        self.clone_timeout_sec = clone_timeout_sec  # 克隆配音逐段推理耗时更长(200段约15-25min)，独立超时上限
 
     # -- 底层 ssh/scp 封装：失败时报清晰错误（含命令 + stderr），不吞异常 --
 
-    def _ssh(self, remote_cmd: str) -> str:
+    def _ssh(self, remote_cmd: str, timeout_sec: int | None = None) -> str:
+        timeout = self.timeout_sec if timeout_sec is None else timeout_sec
         result = _run_checked(
-            ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd], self.timeout_sec,
+            ["ssh", "-o", "BatchMode=yes", self.host, remote_cmd], timeout,
             timeout_msg=(
-                f"ssh 超时 {self.timeout_sec}s (host={self.host}): {remote_cmd!r} "
+                f"ssh 超时 {timeout}s (host={self.host}): {remote_cmd!r} "
                 f"—— zion 可能掉线/卡死，管线中止而非无限挂起"
             ),
             fail_msg_prefix=f"ssh 失败 (host={self.host}): {remote_cmd!r}",
         )
         return result.stdout
 
-    def _scp(self, src: str, dst: str) -> None:
+    def _scp(self, src: str, dst: str, timeout_sec: int | None = None) -> None:
+        timeout = self.timeout_sec if timeout_sec is None else timeout_sec
         _run_checked(
-            ["scp", "-o", "BatchMode=yes", src, dst], self.timeout_sec,
-            timeout_msg=f"scp 超时 {self.timeout_sec}s: {src} -> {dst}",
+            ["scp", "-o", "BatchMode=yes", src, dst], timeout,
+            timeout_msg=f"scp 超时 {timeout}s: {src} -> {dst}",
             fail_msg_prefix=f"scp 失败: {src} -> {dst}",
         )
 
@@ -192,9 +239,15 @@ class SSHRemoteGPU:
 
         transcript_path = out_dir / "transcript.json"
         no_vocals_path = out_dir / "no_vocals.mp3"
+        vocals_path = out_dir / "vocals.mp3"
         self._scp(f"{self.host}:{remote_out}/transcript.json", str(transcript_path))
         self._scp(f"{self.host}:{remote_out}/no_vocals.mp3", str(no_vocals_path))
-        return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+        self._scp(f"{self.host}:{remote_out}/vocals.mp3", str(vocals_path))
+        return {
+            "transcript": transcript_path,
+            "no_vocals": no_vocals_path,
+            "vocals": vocals_path,
+        }
 
     def generate_image(self, prompt: str, out_path: Path) -> Path:
         """部署 scripts/zion_sdxl.py、经 wrapper 跑 SDXL、把生成的 PNG scp 回
@@ -210,6 +263,40 @@ class SSHRemoteGPU:
         self._scp(f"{self.host}:{remote_out}", str(out_path))
         return out_path
 
+    def clone_synthesize(self, zh_script: Path, vocals: Path, out_dir: Path) -> Path:
+        """部署 scripts/zion_clone_tts.py、scp zh_script.json + vocals.mp3 上去、
+        经 `~/clone-py` 跑 F5-TTS 逐段克隆配音、把产出的 nNNN.wav 整目录 tar 打包
+        拉回本地 out_dir。
+
+        用 tar 而非逐文件 scp：产物文件名(id)是跑完才知道的动态集合(部分段可能
+        因单段失败而缺失)，逐文件 scp 得先 ssh 查一遍远端目录列文件名，tar 打包
+        一次拉回更简单可靠——同 P7 计划里"keep simple"的取舍。"""
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+        remote_script = self._deploy_script(_ZION_CLONE_SCRIPT_NAME)
+        remote_zh_script = f"{self.workdir}/{Path(zh_script).name}"
+        remote_vocals = f"{self.workdir}/clone_{Path(vocals).name}"
+        remote_out = f"{self.workdir}/clone_out_{Path(zh_script).stem}"
+        remote_tar = f"{remote_out}.tar"
+
+        self._scp(str(zh_script), f"{self.host}:{remote_zh_script}")
+        self._scp(str(vocals), f"{self.host}:{remote_vocals}")
+        self._ssh(f"mkdir -p {remote_out}")
+        self._ssh(
+            f"{self.clone_wrapper} {remote_script} {remote_zh_script} {remote_vocals} "
+            f"{remote_out}",
+            timeout_sec=self.clone_timeout_sec,
+        )
+        self._ssh(f"tar -C {remote_out} -cf {remote_tar} .", timeout_sec=self.clone_timeout_sec)
+
+        local_tar = out_dir / "_clone_out.tar"
+        self._scp(f"{self.host}:{remote_tar}", str(local_tar), timeout_sec=self.clone_timeout_sec)
+        import tarfile
+        with tarfile.open(local_tar) as tf:
+            tf.extractall(out_dir)
+        local_tar.unlink()
+        return out_dir
+
 
 class LocalGPU:
     """P7 T14：管线本身就跑在 zion 上时用它——同一台机器既是控制端又是 GPU
@@ -218,20 +305,25 @@ class LocalGPU:
     scripts/zion_gpu_asr.py / zion_sdxl.py：脚本的 out_dir/out_path 参数就是
     最终产物落点（同一份文件系统），跑完直接读，不需要再搬一次。
 
-    协议（transcribe_separate/generate_image 的输入输出契约）跟 SSHRemoteGPU
-    完全一致，因此上游 d2_gpu/d8_meta 不用感知走的是 local 还是 ssh。
+    协议（transcribe_separate/generate_image/clone_synthesize 的输入输出契约）
+    跟 SSHRemoteGPU 完全一致，因此上游 d2_gpu/d4_tts/d8_meta 不用感知走的是
+    local 还是 ssh。
     """
 
     def __init__(
         self,
         wrapper: str = "~/gpu-py",
+        clone_wrapper: str = "~/clone-py",
         whisper_model: str = "medium.en",
         timeout_sec: int = 1200,
+        clone_timeout_sec: int = 7200,
         repo_root: Path | None = None,
     ):
         self.wrapper = str(Path(wrapper).expanduser())
+        self.clone_wrapper = str(Path(clone_wrapper).expanduser())  # P7 T17：clone-venv 的 wrapper
         self.whisper_model = whisper_model
         self.timeout_sec = timeout_sec        # 同 SSHRemoteGPU：GPU 任务卡死不能无限挂住管线
+        self.clone_timeout_sec = clone_timeout_sec  # 克隆配音逐段推理耗时更长(200段约15-25min)，独立超时上限
         self.repo_root = Path(repo_root) if repo_root is not None else _REPO_ROOT
 
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict:
@@ -249,6 +341,7 @@ class LocalGPU:
         return {
             "transcript": out_dir / "transcript.json",
             "no_vocals": out_dir / "no_vocals.mp3",
+            "vocals": out_dir / "vocals.mp3",
         }
 
     def generate_image(self, prompt: str, out_path: Path) -> Path:
@@ -265,6 +358,22 @@ class LocalGPU:
         )
         return out_path
 
+    def clone_synthesize(self, zh_script: Path, vocals: Path, out_dir: Path) -> Path:
+        """本机经 `~/clone-py` 跑 scripts/zion_clone_tts.py：脚本直接把
+        n{id:03d}.wav 写进 out_dir（同一份文件系统，不需要再搬一次）。"""
+        out_dir.mkdir(parents=True, exist_ok=True)
+        script = self.repo_root / "scripts" / _ZION_CLONE_SCRIPT_NAME
+        cmd = [self.clone_wrapper, str(script), str(zh_script), str(vocals), str(out_dir)]
+        _run_checked(
+            cmd, self.clone_timeout_sec,
+            timeout_msg=(
+                f"local clone-py 超时 {self.clone_timeout_sec}s: {cmd!r} "
+                f"—— GPU 任务卡死，管线中止而非无限挂起"
+            ),
+            fail_msg_prefix=f"local clone-py 失败: {cmd!r}",
+        )
+        return out_dir
+
 
 def get_remote(config: Config) -> RemoteGPU:
     provider = config.get("remote.provider", "ssh")
@@ -276,11 +385,15 @@ def get_remote(config: Config) -> RemoteGPU:
             workdir=config.get("remote.workdir", "~/p7-work"),
             whisper_model=config.get("remote.whisper_model", "medium.en"),
             timeout_sec=config.get("remote.timeout_sec", 1200),
+            clone_wrapper=config.get("remote.clone_wrapper", "~/clone-py"),
+            clone_timeout_sec=config.get("remote.clone_timeout_sec", 7200),
         )
     if provider == "local":
         return LocalGPU(
             wrapper=config.get("remote.wrapper", "~/gpu-py"),
             whisper_model=config.get("remote.whisper_model", "medium.en"),
             timeout_sec=config.get("remote.timeout_sec", 1200),
+            clone_wrapper=config.get("remote.clone_wrapper", "~/clone-py"),
+            clone_timeout_sec=config.get("remote.clone_timeout_sec", 7200),
         )
     raise ValueError(f"未知 remote provider: {provider}")

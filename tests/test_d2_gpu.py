@@ -51,8 +51,10 @@ def test_happy_path_lands_canonical_outputs(tmp_path):
 
     transcript_path = ctx.job / d2.OUTPUT
     no_vocals_path = ctx.job / d2.NO_VOCALS_OUTPUT
+    vocals_path = ctx.job / d2.VOCALS_OUTPUT
     assert transcript_path.exists()
     assert no_vocals_path.exists()
+    assert vocals_path.exists()          # P7 T17：克隆配音参考音色来源
 
     data = json.loads(transcript_path.read_text(encoding="utf-8"))
     assert isinstance(data.get("segments"), list)
@@ -60,12 +62,13 @@ def test_happy_path_lands_canonical_outputs(tmp_path):
     for seg in data["segments"]:
         assert {"start", "end", "text"} <= seg.keys()
 
-    probe = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
-         "-of", "csv=p=0", str(no_vocals_path)],
-        capture_output=True, text=True, check=True,
-    )
-    assert "audio" in probe.stdout
+    for audio_path in (no_vocals_path, vocals_path):
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
+             "-of", "csv=p=0", str(audio_path)],
+            capture_output=True, text=True, check=True,
+        )
+        assert "audio" in probe.stdout
 
     assert ctx.warnings == []          # FakeRemoteGPU 罐头有 2 段，不应告警
 
@@ -110,7 +113,7 @@ def test_audio_extraction_feeds_a_real_decodable_wav_to_remote(tmp_path, monkeyp
 
 class _ZeroSegRemote:
     """模拟源片无可检测语音：transcript.json 里 segments 为空数组，
-    no_vocals.mp3 依然是真正可解码音频。不 ssh/不触网。"""
+    no_vocals.mp3/vocals.mp3 依然是真正可解码音频。不 ssh/不触网。"""
 
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -123,7 +126,13 @@ class _ZeroSegRemote:
              "-t", "1", str(no_vocals_path)],
             check=True, capture_output=True,
         )
-        return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+        vocals_path = out_dir / "vocals.mp3"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+             "-t", "1", str(vocals_path)],
+            check=True, capture_output=True,
+        )
+        return {"transcript": transcript_path, "no_vocals": no_vocals_path, "vocals": vocals_path}
 
 
 def test_zero_segments_raises_stageblocked(tmp_path, monkeypatch):
@@ -142,7 +151,8 @@ def test_zero_segments_raises_stageblocked(tmp_path, monkeypatch):
 
 class _DifferentPathRemote:
     """模拟 remote 产出落在非规范文件名/子目录的情况（比如未来 provider 把
-    产物写到别处）——d2_gpu 必须把它们搬到规范的 transcript.json/no_vocals.mp3。"""
+    产物写到别处）——d2_gpu 必须把它们搬到规范的
+    transcript.json/no_vocals.mp3/vocals.mp3。"""
 
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict:
         work = out_dir / "_remote_work"
@@ -157,7 +167,13 @@ class _DifferentPathRemote:
              "-t", "1", str(no_vocals_path)],
             check=True, capture_output=True,
         )
-        return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+        vocals_path = work / "raw_vocals.mp3"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=16000:cl=mono",
+             "-t", "1", str(vocals_path)],
+            check=True, capture_output=True,
+        )
+        return {"transcript": transcript_path, "no_vocals": no_vocals_path, "vocals": vocals_path}
 
 
 def test_lands_outputs_at_canonical_names_when_remote_uses_different_paths(tmp_path, monkeypatch):
@@ -171,6 +187,7 @@ def test_lands_outputs_at_canonical_names_when_remote_uses_different_paths(tmp_p
 
     assert (ctx.job / d2.OUTPUT).exists()
     assert (ctx.job / d2.NO_VOCALS_OUTPUT).exists()
+    assert (ctx.job / d2.VOCALS_OUTPUT).exists()
     data = read_json(ctx.job, d2.OUTPUT)
     assert data["segments"][0]["text"] == "hi"
 

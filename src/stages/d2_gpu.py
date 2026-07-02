@@ -1,11 +1,15 @@
 """P7 T3：阶段②——把 source.mp4 的音轨转录成英文字幕(时间轴对齐) +
-分离出去人声的背景轨，为下游翻译/配音/混音铺路。
+分离出去人声的背景轨(no_vocals.mp3)和干声轨(vocals.mp3)，为下游翻译/配音/
+混音铺路。
 
 本地只做一件事：从 source.mp4 提取一份"普通"音频(不预先降到 16k/单声道——
 demucs 分离要吃相对完整的音质，16k 单声道降采样是 zion 侧 whisper 转录
 专用的派生步骤，见 scripts/zion_gpu_asr.py._make_16k_mono)。真正的
 GPU 转录 + CPU demucs 分离都编排给 src/remote.py 的 RemoteGPU
 (fake/ssh)完成。
+
+P7 T17：vocals.mp3(demucs 干声轨)现在也落成规范产物——d4_tts 的克隆配音模式
+(tts.provider=="clone")要用它按段切出每个说话人的原声，当 F5-TTS 的参考音色。
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from src.util.jobs import read_json
 OUTPUT = "transcript.json"
 INPUT = "source.mp4"
 NO_VOCALS_OUTPUT = "no_vocals.mp3"
+VOCALS_OUTPUT = "vocals.mp3"      # P7 T17：demucs 干声轨，下游 d4_tts clone 模式的克隆参考音色来源
 AUDIO_WORK_NAME = "source_audio.wav"
 
 
@@ -56,8 +61,10 @@ def run(ctx: Ctx) -> None:
 
     transcript_path = ctx.job / OUTPUT
     no_vocals_path = ctx.job / NO_VOCALS_OUTPUT
+    vocals_path = ctx.job / VOCALS_OUTPUT
     _land(Path(result["transcript"]), transcript_path)
     _land(Path(result["no_vocals"]), no_vocals_path)
+    _land(Path(result["vocals"]), vocals_path)
 
     data = read_json(ctx.job, OUTPUT)
     segments = data.get("segments", [])

@@ -6,7 +6,11 @@ llm:
   gemini_model: gemini-2.5-flash
   script_provider: gemini
 tts:
-  provider: edge            # edge | fake
+  provider: edge            # edge(固定男/女神经音) | fake(离线测) | clone(P7 T17: F5-TTS 声音克隆——按说话人
+                             #   原声(demucs vocals.mp3切片)当参考音色跨语种克隆中文旁白，需 zion 上的
+                             #   clone-venv/F5-TTS，笔记本没 GPU 装不了，只在 config-zion.yaml 启用；
+                             #   见 remote.clone_wrapper/remote.clone_timeout_sec)
+  fallback_provider: edge   # clone 模式下单段克隆失败(F5推理出错/参考音频损坏等)时的回退引擎(edge|fake)
   voice: zh-CN-YunyangNeural       # 默认男声旁白；段 gender=="male"/null/缺失都落它(不确定不瞎猜)
   voice_female: zh-CN-XiaoxiaoNeural  # P7 T9 性别匹配配音：段 gender=="female" 时用它(修用户反馈的女声画面配男声)
   rate: "+0%"               # 正常语速(用户定)。慢速会让配音溢出时间槽(d7有atempo防撞兜底)
