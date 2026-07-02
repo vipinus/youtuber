@@ -192,7 +192,26 @@ def _require_ffmpeg():
         pytest.skip("ffmpeg not available")
 
 
-def test_p7_doc_pipeline_e2e_all_offline_produces_video(tmp_path, monkeypatch):
+class _ScriptedLLM:
+    """d1-d9 全链路里有两个阶段会调 LLM（d3_translate、d8_meta），各自要的
+    JSON 形状完全不同（items 数组包 vs title/description/tags/image_prompt
+    对象），不能像单阶段测试那样用一个 FakeLLM(canned=...) 打天下。按
+    system prompt 里的关键词分发到各自的罐头响应，不改动 src/llm.FakeLLM
+    （其它测试仍用它）。"""
+
+    def __init__(self, responses: dict[str, str]):
+        self._responses = responses
+        self.calls: list[tuple[str, str]] = []
+
+    def generate(self, system: str, prompt: str) -> str:
+        self.calls.append((system, prompt))
+        for key, resp in self._responses.items():
+            if key in system:
+                return resp
+        raise AssertionError(f"e2e 离线契约破了：未预期的 system prompt {system[:80]!r}")
+
+
+def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, monkeypatch):
     _require_ffmpeg()
 
     _install_fake_archive_get(monkeypatch, "nasadoc1", "NASA Space Documentary")
@@ -205,13 +224,24 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video(tmp_path, monkeypatch):
         {"id": 0, "zh": "这是一个假的转录片段。"},
         {"id": 1, "zh": "它纯粹是为了离线测试而存在。"},
     ]})
-    llm = FakeLLM(canned=canned_translation)
+    canned_meta = json.dumps({
+        "title": "NASA太空纪录片：人类最伟大的冒险",
+        "description": "一段震撼的太空探索旅程，带你重返历史现场。",
+        "tags": ["NASA", "太空", "纪录片"],
+        "image_prompt": "a lone astronaut facing a giant ringed planet, dramatic lighting, no text",
+    })
+    llm = _ScriptedLLM({
+        "字幕翻译": canned_translation,        # d3_translate.SYSTEM 的关键词
+        "YouTube 运营": canned_meta,           # d8_meta.SYSTEM 的关键词
+    })
 
     cfg = Config({
         "pipeline": "doc",              # 走 config 的选择器路径（不是显式 pipeline= 入参）
         "remote": {"provider": "fake"},
         "tts": {"provider": "fake"},
         "llm": {"provider": "fake"},
+        "youtube": {"provider": "fake"},           # 阶段⑨：假上传器，绝不真触网 YouTube
+        "publish": {"auto_upload": True, "visibility": "private"},  # 护栏#3 仍是私享
         "p7": {"collections": ["nasa"]},
     })
 
@@ -219,7 +249,7 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video(tmp_path, monkeypatch):
 
     job = tmp_path / "nasa-e2e"
 
-    # 全链路每一站的产物都落地了
+    # 全链路每一站的产物都落地了（含新接的 阶段⑧⑨）
     assert (job / "source.mp4").exists()
     assert (job / "transcript.json").exists()
     assert (job / "zh_script.json").exists()
@@ -227,12 +257,16 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video(tmp_path, monkeypatch):
     assert (job / "subs.ass").exists()
     video = job / "video.mp4"
     assert video.exists() and video.stat().st_size > 0
+    assert (job / "meta.json").exists()
+    assert (job / "thumb_bg.png").exists()
+    assert (job / "thumb.jpg").exists()
+    assert (job / "publish.json").exists()
 
     # 翻译真的走了 LLM（不是英文回退）
     zh_script = read_json(job, "zh_script.json")
     assert zh_script["segments"][0]["zh"] == "这是一个假的转录片段。"
     assert zh_script["segments"][1]["zh"] == "它纯粹是为了离线测试而存在。"
-    assert len(llm.calls) == 1                    # 2 段 < CHUNK_SIZE(80) -> 一批打完
+    assert len(llm.calls) == 2                    # d3_translate 一批(2段<80) + d8_meta 一次
 
     # 配音真的合成了音频文件
     narration = read_json(job, "narration.json")
@@ -243,3 +277,17 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video(tmp_path, monkeypatch):
     # 成片是真正可解码、有音有画的视频（不是占位字节）
     kinds = _ffprobe_kinds(video)
     assert "video" in kinds and "audio" in kinds
+
+    # 阶段⑧：AI 缩略图 + 简介，署名真的追加了
+    from PIL import Image
+    meta = read_json(job, "meta.json")
+    assert meta["title"] == "NASA太空纪录片：人类最伟大的冒险"
+    assert "NASA / NASA Space Documentary" in meta["description"]
+    assert "公有领域" in meta["description"]
+    thumb = job / "thumb.jpg"
+    assert Image.open(thumb).size == (1280, 720)
+
+    # 阶段⑨：s9_publish 原样复用，护栏#3 依旧生效（private，不是默认公开）
+    publish = read_json(job, "publish.json")
+    assert publish["videoId"] == "FAKE12345"
+    assert publish["status"] == "private"

@@ -15,6 +15,7 @@ from src.stages import (
     d4_tts,
     d5_subs,
     d7_assemble,
+    d8_meta,
     s1_topic,
     s2_research,
     s3_script,
@@ -41,8 +42,11 @@ STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
 ]
 
 # P7「整片翻译」管线：选公有领域纪录片 → zion GPU 转录/去人声 → 中文翻译 →
-# 中文配音/字幕 → 合成成片。用户已 pivot 到这条链作为主产品（见 config.yaml
-# 的 `pipeline: doc`），但 CLI/config 都能显式切回 `original`。
+# 中文配音/字幕 → 合成成片 → AI 缩略图+简介 → 发布。用户已 pivot 到这条链作为
+# 主产品（见 config.yaml 的 `pipeline: doc`），但 CLI/config 都能显式切回
+# `original`。d9_publish 复用既有 s9_publish（读 meta.json+video.mp4+thumb.jpg，
+# 护栏#3 auto_upload/visibility 不变）——d8_meta 产出的字段/文件约定与它完全
+# 兼容，不用改 s9_publish 本身。
 STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d1_source", d1_source.run, d1_source.OUTPUT),
     ("d2_gpu", d2_gpu.run, d2_gpu.OUTPUT),
@@ -50,6 +54,8 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d4_tts", d4_tts.run, d4_tts.OUTPUT),
     ("d5_subs", d5_subs.run, d5_subs.OUTPUT),
     ("d7_assemble", d7_assemble.run, d7_assemble.OUTPUT),
+    ("d8_meta", d8_meta.run, d8_meta.OUTPUT),
+    ("d9_publish", s9_publish.run, s9_publish.OUTPUT),
 ]
 
 

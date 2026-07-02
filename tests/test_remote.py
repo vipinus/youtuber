@@ -47,6 +47,29 @@ def test_fake_remote_gpu_creates_out_dir_if_missing(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# FakeRemoteGPU.generate_image — 离线确定性，产物必须是真正可解码的 PNG
+# ---------------------------------------------------------------------------
+
+def test_fake_remote_gpu_generate_image_writes_valid_png(tmp_path):
+    from PIL import Image
+
+    out_path = tmp_path / "thumb_bg.png"
+    result = FakeRemoteGPU().generate_image("a dramatic space scene, no text", out_path)
+
+    assert result == out_path
+    assert out_path.exists() and out_path.stat().st_size > 0
+    img = Image.open(out_path)
+    assert img.size == (1280, 720)
+    assert img.format == "PNG"
+
+
+def test_fake_remote_gpu_generate_image_creates_parent_dir(tmp_path):
+    out_path = tmp_path / "nested" / "thumb_bg.png"
+    FakeRemoteGPU().generate_image("prompt", out_path)
+    assert out_path.exists()
+
+
+# ---------------------------------------------------------------------------
 # get_remote 工厂
 # ---------------------------------------------------------------------------
 
@@ -155,6 +178,67 @@ def test_ssh_remote_gpu_happy_path_issues_expected_commands(tmp_path, monkeypatc
     assert calls[4][0] == "scp" and calls[4][1:3] == ["-o", "BatchMode=yes"]
     assert calls[4][3] == "fabric@zion:~/p7-work/out_narration/transcript.json"
     assert calls[5][3] == "fabric@zion:~/p7-work/out_narration/no_vocals.mp3"
+
+
+def test_ssh_remote_gpu_generate_image_happy_path_issues_expected_commands(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    out_path = tmp_path / "thumb_bg.png"
+    remote = SSHRemoteGPU(host="fabric@zion", workdir="~/p7-work", wrapper="~/gpu-py")
+    result = remote.generate_image("a dramatic scene, no text", out_path)
+
+    assert result == out_path
+    assert out_path.parent.is_dir()
+
+    # 命令序列: mkdir workdir, scp zion_sdxl.py 上去, ssh 跑脚本(prompt 被 shlex.quote), scp 拉回
+    assert calls[0][:2] == ["ssh", "-o"]
+    assert "mkdir -p ~/p7-work" in calls[0][-1]
+    assert calls[1][0] == "scp" and calls[1][-1] == "fabric@zion:~/p7-work/zion_sdxl.py"
+    run_cmd = calls[2][-1]
+    assert "~/gpu-py" in run_cmd and "zion_sdxl.py" in run_cmd
+    assert "a dramatic scene, no text" in run_cmd     # 简单 prompt 不含特殊字符，quote 后原样可见
+    assert "~/p7-work/thumb_bg.png" in run_cmd
+    assert calls[3][0] == "scp" and calls[3][1:3] == ["-o", "BatchMode=yes"]
+    assert calls[3][3] == "fabric@zion:~/p7-work/thumb_bg.png"
+    assert calls[3][4] == str(out_path)
+
+
+def test_ssh_remote_gpu_generate_image_quotes_prompt_with_special_chars(tmp_path, monkeypatch):
+    """prompt 里带空格/引号时必须被 shlex.quote 安全转义，否则远端 shell 会把
+    它拆成多个参数或注入命令。"""
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    remote = SSHRemoteGPU()
+    remote.generate_image("a scene with \"quotes\" and $(danger); rm -rf", tmp_path / "out.png")
+
+    run_cmd = calls[2][-1]
+    import shlex
+    assert shlex.quote("a scene with \"quotes\" and $(danger); rm -rf") in run_cmd
+
+
+def test_ssh_remote_gpu_generate_image_raises_clear_error_on_ssh_failure(tmp_path, monkeypatch):
+    def fake_run(cmd, **kwargs):
+        if cmd[0] == "ssh" and "gpu-py" in cmd[-1]:
+            return _FakeCompleted(returncode=1, stdout="", stderr="CUDA OOM")
+        return _FakeCompleted(returncode=0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    remote = SSHRemoteGPU()
+    with pytest.raises(RuntimeError, match="ssh 失败"):
+        remote.generate_image("prompt", tmp_path / "out.png")
 
 
 def test_ssh_remote_gpu_raises_clear_error_on_ssh_failure(tmp_path, monkeypatch):

@@ -2,8 +2,8 @@
 
 两条管线共用这一个包：
   - 原始 s1-s9：选题 -> 调研 -> 脚本 -> 配音 -> 字幕 -> 配图 -> 合成 -> 元数据 -> 发布。
-  - P7 d1-d7（整片翻译）：选片 -> zion GPU 转录/去人声 -> 中文翻译 -> 中文配音 ->
-    中文字幕 -> 合成成片。
+  - P7 d1-d9（整片翻译）：选片 -> zion GPU 转录/去人声 -> 中文翻译 -> 中文配音 ->
+    中文字幕 -> 合成成片 -> AI 缩略图+简介 -> 发布(复用 s9_publish)。
 
 导出各阶段子模块名，供 `src.run` 的 STAGES/STAGES_P7 装配、以及测试按
 `from src.stages import d1_source` 之类的写法直接引用。
@@ -17,6 +17,7 @@ from src.stages import (
     d4_tts,
     d5_subs,
     d7_assemble,
+    d8_meta,
     s1_topic,
     s2_research,
     s3_script,
@@ -35,6 +36,7 @@ __all__ = [
     "d4_tts",
     "d5_subs",
     "d7_assemble",
+    "d8_meta",
     "s1_topic",
     "s2_research",
     "s3_script",

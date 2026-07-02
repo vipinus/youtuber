@@ -8,9 +8,17 @@ zion 侧配方（已在 zion 上真实端到端验证过，见 memory `zion-gpu-
   - faster-whisper 用 GPU（`device="cuda", compute_type="float16"`）。
   - demucs 用 CPU（`-d cpu`，`--mp3`）——demucs 与这台机器的 GPU cuDNN 不兼容。
   - zion 侧脚本见 scripts/zion_gpu_asr.py（本模块负责部署它 + 编排 scp/ssh）。
+
+P7 T8 追加了 `generate_image`（AI 缩略图背景）：编排手法跟上面完全一样——部署
+scripts/zion_sdxl.py 到 zion、经 `~/gpu-py` 跑 Stable Diffusion XL、scp 一张
+1280x720 PNG 拉回本地。zion 已装好 diffusers/torch 2.6.0+cu124 且模型已缓存
+（见计划文档 SDXL 配方：`enable_model_cpu_offload`+`enable_vae_slicing` 撑住
+8GB 显存，28 步 ~12s）。prompt 里必须带 "no text"——中文标题/水印由本地
+d8_meta 用 Pillow 后期叠加，不指望 SDXL 出中文字。
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Protocol
@@ -19,10 +27,12 @@ from src.config import Config
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ZION_SCRIPT_NAME = "zion_gpu_asr.py"
+_ZION_SDXL_SCRIPT_NAME = "zion_sdxl.py"
 
 
 class RemoteGPU(Protocol):
     def transcribe_separate(self, audio: Path, out_dir: Path) -> dict: ...
+    def generate_image(self, prompt: str, out_path: Path) -> Path: ...
 
 
 class FakeRemoteGPU:
@@ -57,6 +67,24 @@ class FakeRemoteGPU:
             check=True, capture_output=True,
         )
         return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+
+    def generate_image(self, prompt: str, out_path: Path) -> Path:
+        """离线确定性：现场用 Pillow 画一张真正可解码的 1280x720 PNG（纵向渐变），
+        不 ssh/不触网、不依赖 SDXL。下游 d8_meta 的合成/缩略图逻辑吃真图即可，
+        不关心内容是不是 AI 生成的。"""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        from PIL import Image, ImageDraw
+
+        w, h = 1280, 720
+        img = Image.new("RGB", (w, h))
+        draw = ImageDraw.Draw(img)
+        top, bottom = (12, 16, 40), (60, 30, 90)          # 深蓝 -> 深紫，按行画线(快)，不逐像素(慢)
+        for y in range(h):
+            t = y / (h - 1)
+            row = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+            draw.line([(0, y), (w, y)], fill=row)
+        img.save(out_path, "PNG")
+        return out_path
 
 
 class SSHRemoteGPU:
@@ -119,13 +147,15 @@ class SSHRemoteGPU:
                 f"stderr={result.stderr!r}"
             )
 
-    def _deploy_script(self) -> str:
-        """确保 zion_gpu_asr.py 存在于 zion 的 workdir（每次都重新推送，保证
-        跑的是本地最新版本）；返回 zion 上的脚本绝对路径（写法上用 workdir 内
-        相对路径即可，ssh 里 shell 会展开 ~）。"""
-        remote_script = f"{self.workdir}/{self.script_name}"
+    def _deploy_script(self, script_name: str | None = None) -> str:
+        """确保脚本存在于 zion 的 workdir（每次都重新推送，保证跑的是本地最新
+        版本）；返回 zion 上的脚本绝对路径（写法上用 workdir 内相对路径即可，
+        ssh 里 shell 会展开 ~）。不传 script_name 时用 self.script_name（转录
+        脚本），generate_image 会显式传 _ZION_SDXL_SCRIPT_NAME。"""
+        name = script_name or self.script_name
+        remote_script = f"{self.workdir}/{name}"
         self._ssh(f"mkdir -p {self.workdir}")
-        local_script = _REPO_ROOT / "scripts" / self.script_name
+        local_script = _REPO_ROOT / "scripts" / name
         self._scp(str(local_script), f"{self.host}:{remote_script}")
         return remote_script
 
@@ -147,6 +177,20 @@ class SSHRemoteGPU:
         self._scp(f"{self.host}:{remote_out}/transcript.json", str(transcript_path))
         self._scp(f"{self.host}:{remote_out}/no_vocals.mp3", str(no_vocals_path))
         return {"transcript": transcript_path, "no_vocals": no_vocals_path}
+
+    def generate_image(self, prompt: str, out_path: Path) -> Path:
+        """部署 scripts/zion_sdxl.py、经 wrapper 跑 SDXL、把生成的 PNG scp 回
+        out_path。prompt 是普通字符串（非文件），不需要先 scp 上去——直接当
+        命令行参数传给远端脚本，用 shlex.quote 防止里面的空格/引号把远端 shell
+        命令行拆散。"""
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        remote_script = self._deploy_script(_ZION_SDXL_SCRIPT_NAME)
+        remote_out = f"{self.workdir}/{out_path.name}"
+
+        self._ssh(f"{self.wrapper} {remote_script} {shlex.quote(prompt)} {remote_out}")
+        self._scp(f"{self.host}:{remote_out}", str(out_path))
+        return out_path
 
 
 def get_remote(config: Config) -> RemoteGPU:
