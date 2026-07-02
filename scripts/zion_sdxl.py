@@ -5,7 +5,11 @@ zion_gpu_asr.py 的坑：wrapper 先设好 LD_LIBRARY_PATH 再 exec venv python�
 直接跑裸 venv python 加载不了 torch 的底层 CUDA 库。
 
 用法（在 zion 上）：
-    ~/gpu-py zion_sdxl.py "<prompt>" <out.png>
+    ~/gpu-py zion_sdxl.py "<prompt>" <out.png> [genWxH] [outWxH] [--seq]
+    尺寸默认 1024x576 -> 1280x720(d8 缩略图档,行为不变)。
+    --seq 切 enable_sequential_cpu_offload：显存 <2GB 但慢好几倍——zion 同时是
+    桌面机(KDE/游戏常驻 ~3GB 显存)，桌面占用大时 model offload 会 OOM，banner
+    这类离线任务用 --seq 硬挤进去。
 
 已在 zion 上实测（RTX 3070 Ti / 8GB，diffusers + torch 2.6.0+cu124，模型已
 缓存）：加载 ~1s、28 步推理 ~12s、输出 1280x720 PNG。8GB 显存靠
@@ -31,33 +35,48 @@ STEPS = 28
 GUIDANCE = 7.0
 
 
-def generate(prompt: str, out_path: str) -> None:
+def generate(prompt: str, out_path: str,
+             gen_wh: tuple[int, int] = (GEN_W, GEN_H),
+             out_wh: tuple[int, int] = (OUT_W, OUT_H),
+             seq: bool = False) -> None:
     import torch
     from diffusers import StableDiffusionXLPipeline
 
     pipe = StableDiffusionXLPipeline.from_pretrained(
         MODEL_ID, torch_dtype=torch.float16, variant="fp16", use_safetensors=True,
     )
-    pipe.enable_model_cpu_offload()      # cuDNN 兼容后按需 offload 即可塞进 8GB，比 sequential 快
+    if seq:
+        pipe.enable_sequential_cpu_offload()  # <2GB 显存,慢;桌面/游戏占着显存时的兜底档
+    else:
+        pipe.enable_model_cpu_offload()      # cuDNN 兼容后按需 offload 即可塞进 8GB，比 sequential 快
     pipe.enable_vae_slicing()
 
     img = pipe(
         prompt=prompt,
         negative_prompt=NEGATIVE_PROMPT,
-        height=GEN_H, width=GEN_W,
+        height=gen_wh[1], width=gen_wh[0],
         num_inference_steps=STEPS, guidance_scale=GUIDANCE,
-    ).images[0].resize((OUT_W, OUT_H))
+    ).images[0].resize(out_wh)
     img.save(out_path)
 
 
+def _parse_wh(s: str) -> tuple[int, int]:
+    w, h = s.lower().split("x")
+    return int(w), int(h)
+
+
 def main(argv: list[str]) -> int:
-    if len(argv) < 3:
-        print("用法: zion_sdxl.py <prompt> <out.png>", file=sys.stderr)
+    args = [a for a in argv[1:] if a != "--seq"]
+    seq = "--seq" in argv[1:]
+    if len(args) < 2:
+        print("用法: zion_sdxl.py <prompt> <out.png> [genWxH] [outWxH] [--seq]", file=sys.stderr)
         return 2
 
-    prompt, out_path = argv[1], argv[2]
-    generate(prompt, out_path)
-    print(f"缩略图背景生成完成 -> {out_path} ({OUT_W}x{OUT_H})")
+    prompt, out_path = args[0], args[1]
+    gen_wh = _parse_wh(args[2]) if len(args) > 2 else (GEN_W, GEN_H)
+    out_wh = _parse_wh(args[3]) if len(args) > 3 else (OUT_W, OUT_H)
+    generate(prompt, out_path, gen_wh, out_wh, seq=seq)
+    print(f"缩略图背景生成完成 -> {out_path} ({out_wh[0]}x{out_wh[1]})")
     print("ZION_DONE")
     return 0
 
