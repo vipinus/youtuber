@@ -78,28 +78,38 @@ def transcribe(wav16k: Path, model_name: str = DEFAULT_MODEL) -> dict:
 
 
 def separate(audio_in: Path, work_dir: Path) -> tuple[Path, Path]:
-    """demucs CPU 人声分离，返回 (vocals.mp3, no_vocals.mp3) 路径二元组。
+    """demucs 人声分离，返回 (vocals.mp3, no_vocals.mp3) 路径二元组。
 
-    直接对 <audio_in>（原始文件，不重采样/不重声道）分离——demucs 自己按需解码，
-    不需要我们先转成"全质量 wav"。GPU（-d cuda）在这台机器上 cuDNN 不兼容，
-    必须固定 `-d cpu`；输出必须 `--mp3`（默认 wav 落盘要 torchcodec，这台机器
-    上不可用）。vocals.mp3（干净人声）供 P7 T9 算基频分性别；no_vocals.mp3
-    是背景床，两个都要产出才算成功。
+    模型/设备按优先级尝试(用户反馈背景有人声残留后升级):
+      1. htdemucs_ft + cuda —— 精调模型分离更净;torch 降到 cu124 后 cuDNN 已修,
+         GPU 实测 8min 音频 86s(当初"GPU 不兼容"的结论已过时)
+      2. htdemucs_ft + cpu  —— GPU 意外失效时的降档(慢~4x 但质量保住)
+      3. htdemucs   + cpu  —— 最后兜底(老配置,一定能跑)
+    输出必须 `--mp3`(默认 wav 落盘要 torchcodec,这台机器上不可用)。
+    vocals.mp3 供性别检测+克隆参考;no_vocals.mp3 是背景床(original 模式)。
     """
     demucs_out = work_dir / "demucs_out"
-    _run([
-        sys.executable, "-m", "demucs.separate",
-        "--two-stems", "vocals", "--mp3", "-d", "cpu",
-        "-o", str(demucs_out), str(audio_in),
-    ])
-    stem = audio_in.stem
-    stem_dir = demucs_out / "htdemucs" / stem
-    vocals = stem_dir / "vocals.mp3"
-    no_vocals = stem_dir / "no_vocals.mp3"
-    missing = [p for p in (vocals, no_vocals) if not p.exists()]
-    if missing:
-        raise FileNotFoundError(f"demucs 未产出预期文件: {missing}")
-    return vocals, no_vocals
+    attempts = [("htdemucs_ft", "cuda"), ("htdemucs_ft", "cpu"), ("htdemucs", "cpu")]
+    last_err: Exception | None = None
+    for model, device in attempts:
+        try:
+            _run([
+                sys.executable, "-m", "demucs.separate", "-n", model,
+                "--two-stems", "vocals", "--mp3", "-d", device,
+                "-o", str(demucs_out), str(audio_in),
+            ])
+        except Exception as e:                       # noqa: BLE001 — 降档续跑
+            print(f"demucs {model}/{device} 失败({type(e).__name__})，降档重试", file=sys.stderr)
+            last_err = e
+            continue
+        stem_dir = demucs_out / model / audio_in.stem
+        vocals = stem_dir / "vocals.mp3"
+        no_vocals = stem_dir / "no_vocals.mp3"
+        if vocals.exists() and no_vocals.exists():
+            print(f"demucs 使用 {model}/{device}")
+            return vocals, no_vocals
+        last_err = FileNotFoundError(f"demucs({model}) 未产出预期文件")
+    raise RuntimeError(f"demucs 所有档位均失败: {last_err}")
 
 
 def classify_f0(median_f0: float | None) -> str | None:
