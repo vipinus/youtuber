@@ -313,3 +313,15 @@ def test_module_import_does_no_network_at_top_level():
             assert all(a.name.split(".")[0] not in banned for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in banned
+
+
+def test_looks_narrated_rejects_broll_footage():
+    """真跑教训:NASA UHD 飞越/fisheye 素材无解说→转录0段→废片。d1 须过滤掉。"""
+    from src.stages.d1_source import _looks_narrated
+    assert not _looks_narrated("NASA Ultra High Definition")
+    assert not _looks_narrated("Space Station Fisheye Fly-Through 4K Ultra-HD")
+    assert not _looks_narrated("Earth Timelapse", "b-roll footage")
+    assert not _looks_narrated("Aurora 8K UHD flyover")
+    # 正常解说纪录片放行
+    assert _looks_narrated("The Story of Apollo 11", "NASA history documentary narration")
+    assert _looks_narrated("Our World: Arecibo - The Largest Radio Telescope")

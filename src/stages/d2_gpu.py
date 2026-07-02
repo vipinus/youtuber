@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 from src.context import Ctx
+from src.errors import StageBlocked
 from src.remote import get_remote
 from src.util.jobs import read_json
 
@@ -61,4 +62,9 @@ def run(ctx: Ctx) -> None:
     data = read_json(ctx.job, OUTPUT)
     segments = data.get("segments", [])
     if not segments:
-        ctx.warn(f"{ctx.slug}: d2_gpu 转录得到 0 段（源片可能无可检测语音）")
+        # 0 段 = 源片没有可转录的解说(纯素材/音乐/静音)。绝不能继续——那会产出没有
+        # 中文旁白/字幕的废片甚至上传。拦住，让上层换一部有解说的源片。
+        raise StageBlocked(
+            f"{ctx.slug}: d2_gpu 转录得到 0 段——源片无解说旁白(纯画面/音乐)，"
+            f"不适合整片翻译。删掉 source.mp4 用 --force 重跑 d1_source 换片。"
+        )

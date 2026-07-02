@@ -126,18 +126,18 @@ class _ZeroSegRemote:
         return {"transcript": transcript_path, "no_vocals": no_vocals_path}
 
 
-def test_zero_segments_warns_but_does_not_raise(tmp_path, monkeypatch):
+def test_zero_segments_raises_stageblocked(tmp_path, monkeypatch):
+    """0 段 = 源片无解说(纯素材)，必须 StageBlocked 拦住，绝不静默出没中文的废片。"""
     import src.stages.d2_gpu as d2
+    from src.errors import StageBlocked
+    import pytest
 
     ctx = _ctx(tmp_path)
     _write_fake_source_mp4(ctx.job / d2.INPUT)
     monkeypatch.setattr(d2, "get_remote", lambda config: _ZeroSegRemote())
 
-    d2.run(ctx)          # 不应抛异常
-
-    assert any("0 段" in w or "0段" in w for w in ctx.warnings)
-    data = read_json(ctx.job, d2.OUTPUT)
-    assert data["segments"] == []
+    with pytest.raises(StageBlocked):
+        d2.run(ctx)
 
 
 class _DifferentPathRemote:

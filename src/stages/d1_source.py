@@ -143,6 +143,23 @@ def _download(url: str, dest: Path) -> None:
                 fh.write(chunk)
 
 
+# 无解说/纯素材信号：这类只有画面+背景乐(NASA UHD/4K 飞越、fisheye 穿梭等)，
+# 转录会得 0 段→没得翻译→出没中文的废片。宁可跳过，也不选这种源。
+_NON_NARRATED = (
+    "fly-through", "flythrough", "fly through", "fisheye", "b-roll", "b roll",
+    "timelapse", "time-lapse", "time lapse", "montage", "no narration", "no audio",
+    "silent", "music only", "screensaver", "ambient", "ultra high definition",
+    "ultra-high", "uhd", "4k", "8k", "flyover", "aerials", "raw footage",
+)
+
+
+def _looks_narrated(*texts: str) -> bool:
+    """标题/主题/描述命中无解说信号则判为纯素材(返回 False)。启发式，配合 d2 的
+    0 段兜底：即便这里漏判，d2 转出 0 段也会 StageBlocked 拦住，不会静默出废片。"""
+    hay = " ".join(t for t in texts if t).lower()
+    return not any(k in hay for k in _NON_NARRATED)
+
+
 def run(ctx: Ctx) -> None:
     cfg = ctx.config
     query = cfg.get("p7.query", DEFAULT_QUERY)
@@ -177,7 +194,11 @@ def run(ctx: Ctx) -> None:
             continue
 
         title = info.get("title") or d.get("title") or identifier
-        if _is_blocked(str(title), _join(info.get("subject")), _join(info.get("description"))):
+        subject, desc = _join(info.get("subject")), _join(info.get("description"))
+        if _is_blocked(str(title), subject, desc):
+            continue
+        if not _looks_narrated(str(title), subject, desc):
+            ctx.warn(f"d1_source: {identifier} 疑似无解说素材(纯画面/音乐)，跳过")
             continue
 
         picked = _pick_video_file(files, min_sec, max_sec, max_bytes)
