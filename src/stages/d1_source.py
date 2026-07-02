@@ -150,6 +150,7 @@ _NON_NARRATED = (
     "timelapse", "time-lapse", "time lapse", "montage", "no narration", "no audio",
     "silent", "music only", "screensaver", "ambient", "ultra high definition",
     "ultra-high", "uhd", "4k", "8k", "flyover", "aerials", "raw footage",
+    "resource reel", "stock footage", "highlight reel",   # NASA 给创作者的素材卷，故意无旁白
 )
 
 

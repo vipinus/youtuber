@@ -325,3 +325,11 @@ def test_looks_narrated_rejects_broll_footage():
     # 正常解说纪录片放行
     assert _looks_narrated("The Story of Apollo 11", "NASA history documentary narration")
     assert _looks_narrated("Our World: Arecibo - The Largest Radio Telescope")
+
+
+def test_looks_narrated_rejects_resource_reels():
+    """HD 实探发现:NASA 'Resource Reel'/stock footage 是给创作者的无旁白素材卷,须过滤。"""
+    from src.stages.d1_source import _looks_narrated
+    assert not _looks_narrated("NASA Orion Resource Reel")
+    assert not _looks_narrated("Artemis stock footage collection")
+    assert _looks_narrated("ISS Benefits for Humanity")      # 真解说系列片放行
