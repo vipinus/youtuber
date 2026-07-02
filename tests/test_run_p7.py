@@ -34,6 +34,12 @@ def test_stages_for_resolves_original_and_doc():
     assert run_mod._stages_for("doc") is run_mod.STAGES_P7
 
 
+def test_stages_p7_includes_d10_archive_right_after_d9_publish():
+    """P7 T15：归档阶段接在发布之后，且是链路的最后一站。"""
+    names = [s[0] for s in run_mod.STAGES_P7]
+    assert names[-2:] == ["d9_publish", "d10_archive"]
+
+
 def test_stages_for_rejects_unknown_pipeline_name():
     with pytest.raises(ValueError, match="未知 pipeline"):
         run_mod._stages_for("nope")
@@ -243,7 +249,14 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
         "youtube": {"provider": "fake"},           # 阶段⑨：假上传器，绝不真触网 YouTube
         "publish": {"auto_upload": True, "visibility": "private"},  # 护栏#3 仍是私享
         "p7": {"collections": ["nasa"]},
+        # 阶段⑩：archive.dir 指向 tmp_path 下的假 NAS，绝不能吃 config.yaml 里
+        # 真实的 `~/nas/Share/youtuber` 默认值（那样会在跑测试的机器家目录下
+        # mkdir 出一棵真目录树）。trim_local=False，好让下面沿用的既有断言
+        # （job/video.mp4 等还在本地、ffprobe 能读到真实音视频流）继续成立——
+        # 裁剪行为本身已经在 tests/test_d10_archive.py 里独立覆盖。
+        "archive": {"dir": str(tmp_path / "nas_archive"), "trim_local": False},
     })
+    (tmp_path / "nas_archive").mkdir()   # d10_archive 要求归档根目录预先存在，才不算 unreachable
 
     run_mod.run_pipeline("nasa-e2e", cfg, tmp_path, llm)
 
@@ -261,6 +274,7 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     assert (job / "thumb_bg.png").exists()
     assert (job / "thumb.jpg").exists()
     assert (job / "publish.json").exists()
+    assert (job / "archive.json").exists()
 
     # 翻译真的走了 LLM（不是英文回退）
     zh_script = read_json(job, "zh_script.json")
@@ -291,3 +305,13 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     publish = read_json(job, "publish.json")
     assert publish["videoId"] == "FAKE12345"
     assert publish["status"] == "private"
+
+    # 阶段⑩：全链路最后一站——发布完的 job 真的搬去了（假）NAS，且校验通过
+    archive = read_json(job, "archive.json")
+    assert archive["status"] == "archived"
+    dest = Path(archive["dest"])
+    assert dest == tmp_path / "nas_archive" / "nasa-e2e"
+    assert (dest / "video.mp4").exists()
+    assert (dest / "video.mp4").stat().st_size == video.stat().st_size
+    assert (dest / "meta.json").exists()
+    assert archive["trimmed"] == []          # trim_local=False，本地一律没删

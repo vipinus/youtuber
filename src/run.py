@@ -16,6 +16,7 @@ from src.stages import (
     d5_subs,
     d7_assemble,
     d8_meta,
+    d10_archive,
     s1_topic,
     s2_research,
     s3_script,
@@ -42,11 +43,13 @@ STAGES: list[tuple[str, Callable[[Ctx], None], str]] = [
 ]
 
 # P7「整片翻译」管线：选公有领域纪录片 → zion GPU 转录/去人声 → 中文翻译 →
-# 中文配音/字幕 → 合成成片 → AI 缩略图+简介 → 发布。用户已 pivot 到这条链作为
-# 主产品（见 config.yaml 的 `pipeline: doc`），但 CLI/config 都能显式切回
-# `original`。d9_publish 复用既有 s9_publish（读 meta.json+video.mp4+thumb.jpg，
-# 护栏#3 auto_upload/visibility 不变）——d8_meta 产出的字段/文件约定与它完全
-# 兼容，不用改 s9_publish 本身。
+# 中文配音/字幕 → 合成成片 → AI 缩略图+简介 → 发布 → 归档到 NAS。用户已 pivot
+# 到这条链作为主产品（见 config.yaml 的 `pipeline: doc`），但 CLI/config 都能
+# 显式切回 `original`。d9_publish 复用既有 s9_publish（读
+# meta.json+video.mp4+thumb.jpg，护栏#3 auto_upload/visibility 不变）——
+# d8_meta 产出的字段/文件约定与它完全兼容，不用改 s9_publish 本身。d10_archive
+# 把发布完的 job 整份搬去 NAS 并裁剪本地大媒体，失败只留标记不中止 run（视频
+# 已经发布，归档是 best-effort）。
 STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d1_source", d1_source.run, d1_source.OUTPUT),
     ("d2_gpu", d2_gpu.run, d2_gpu.OUTPUT),
@@ -56,6 +59,7 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d7_assemble", d7_assemble.run, d7_assemble.OUTPUT),
     ("d8_meta", d8_meta.run, d8_meta.OUTPUT),
     ("d9_publish", s9_publish.run, s9_publish.OUTPUT),
+    ("d10_archive", d10_archive.run, d10_archive.OUTPUT),
 ]
 
 

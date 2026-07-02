@@ -50,6 +50,10 @@ publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
   visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
   playlist: "太空探索/NASA"  # 上传成功后自动加入的播放列表标题（找不到就新建）；换题材改这里；留空则不入列
+archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
+  dir: "~/nas/Share/youtuber" # 归档根目录(zion 上 NFS 自动挂载 tatara 的写入点)；`~` 会展开成当前用户家目录。
+                             # 目录不存在/不可写(如开发笔记本没挂 NFS)→ 只告警+落 status:unreachable，不中止 run
+  trim_local: true          # 归档校验(逐文件核对存在+大小)通过后删本地大媒体文件，*.json/*.ass/thumb.jpg 留本地当台账
 paths:
   jobs_root: jobs
   seeds: seeds/cases.yaml
