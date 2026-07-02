@@ -33,8 +33,8 @@ def test_happy_path_maps_zh_by_id_and_preserves_timing(tmp_path):
     })
     ctx = _ctx(tmp_path, FakeLLM(canned=canned))
     _write_transcript(ctx, [
-        {"start": 0.0, "end": 2.0, "text": "Hello world"},
-        {"start": 2.0, "end": 4.5, "text": "This is the second sentence"},
+        {"start": 0.0, "end": 2.0, "text": "Hello world", "gender": "male"},
+        {"start": 2.0, "end": 4.5, "text": "This is the second sentence", "gender": "female"},
     ])
 
     d3.run(ctx)
@@ -44,10 +44,13 @@ def test_happy_path_maps_zh_by_id_and_preserves_timing(tmp_path):
     assert len(out["segments"]) == 2
 
     seg0, seg1 = out["segments"]
-    assert seg0 == {"id": 0, "start": 0.0, "end": 2.0, "en": "Hello world", "zh": "你好世界"}
+    assert seg0 == {
+        "id": 0, "start": 0.0, "end": 2.0,
+        "en": "Hello world", "zh": "你好世界", "gender": "male",
+    }
     assert seg1 == {
         "id": 1, "start": 2.0, "end": 4.5,
-        "en": "This is the second sentence", "zh": "这是第二句",
+        "en": "This is the second sentence", "zh": "这是第二句", "gender": "female",
     }
     assert ctx.warnings == []
 
@@ -66,6 +69,35 @@ def test_zero_segments_writes_empty_output_and_warns(tmp_path):
     assert out["segments"] == []
     assert any("0" in w for w in ctx.warnings)
     assert ctx.llm.calls == []          # no LLM call for empty input
+
+
+# ---------------------------------------------------------------------------
+# P7 T9 — gender passthrough (transcript.json -> zh_script.json)
+# ---------------------------------------------------------------------------
+
+def test_gender_field_passes_through_from_transcript_to_zh_script(tmp_path):
+    """d2_gpu(zion 侧基频估计) 写进 transcript.json 的 gender 必须原样透传到
+    zh_script.json，供 d4_tts 按段挑男/女声。没有 gender 键的段(旧数据/检测
+    失败) -> 输出 gender=None，不瞎猜。"""
+    canned = json.dumps({
+        "items": [
+            {"id": 0, "zh": "男声"},
+            {"id": 1, "zh": "女声"},
+            {"id": 2, "zh": "未知"},
+        ]
+    })
+    ctx = _ctx(tmp_path, FakeLLM(canned=canned))
+    _write_transcript(ctx, [
+        {"start": 0.0, "end": 1.0, "text": "one", "gender": "male"},
+        {"start": 1.0, "end": 2.0, "text": "two", "gender": "female"},
+        {"start": 2.0, "end": 3.0, "text": "three"},        # no gender key at all
+    ])
+
+    d3.run(ctx)
+
+    out = read_json(ctx.job, d3.OUTPUT)
+    genders = [seg["gender"] for seg in out["segments"]]
+    assert genders == ["male", "female", None]
 
 
 # ---------------------------------------------------------------------------
@@ -93,14 +125,19 @@ def test_missing_ids_fall_back_without_misalignment(tmp_path):
     segs = out["segments"]
     assert len(segs) == 3          # all segments present, none dropped
 
-    assert segs[0] == {"id": 0, "start": 0.0, "end": 1.0, "en": "One", "zh": "第一句"}
+    assert segs[0] == {
+        "id": 0, "start": 0.0, "end": 1.0, "en": "One", "zh": "第一句", "gender": None,
+    }
     # id 1 missing from LLM response -> fallback (English), timing/id untouched
     assert segs[1]["id"] == 1
     assert segs[1]["start"] == 1.0
     assert segs[1]["end"] == 2.0
     assert segs[1]["en"] == "Two"
     assert segs[1]["zh"] == "Two"          # fallback = English original
-    assert segs[2] == {"id": 2, "start": 2.0, "end": 3.0, "en": "Three", "zh": "第三句"}
+    assert segs[1]["gender"] is None       # input transcript never had gender -> passthrough None
+    assert segs[2] == {
+        "id": 2, "start": 2.0, "end": 3.0, "en": "Three", "zh": "第三句", "gender": None,
+    }
 
     assert any("1/3" in w for w in ctx.warnings)
 

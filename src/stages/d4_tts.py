@@ -6,11 +6,18 @@
 src/util/ffprobe.duration_sec 量真实音频时长（含引擎尾静音，修时间轴漂移，
 与 s4_tts 同一手法）。zh_script 的 zh 字段偶尔会因翻译缺失回退成英文——这里
 不区分中英文，只要非空就照常配音；只有空串才跳过。
+
+P7 T9：性别匹配配音——按段 gender 字段（d2_gpu 经 zion 基频估计、d3_translate
+透传）挑男声/女声引擎，修用户反馈的"画面是女性说话却配了男声"问题。
+gender=="female" 用 tts.voice_female，其余（"male"/None/缺失）落
+tts.voice（默认男声旁白，不确定时不瞎猜、走默认更安全）。同一 voice 只建一
+个引擎实例(engines 缓存)，避免重复构造。选中的 voice 写进 narration.json
+每段的 "voice" 字段，供调试核对配音是否配对。
 """
 from __future__ import annotations
 
 from src.context import Ctx
-from src.tts import get_tts
+from src.tts import TTSEngine, get_tts
 from src.util.ffprobe import duration_sec
 from src.util.jobs import read_json, write_json
 
@@ -18,14 +25,20 @@ OUTPUT = "narration.json"
 INPUT = "zh_script.json"
 
 
+def _voice_for(gender: str | None, ctx: Ctx) -> str:
+    if gender == "female":
+        return ctx.config.get("tts.voice_female", "zh-CN-XiaoxiaoNeural")
+    return ctx.config.get("tts.voice", "zh-CN-YunyangNeural")
+
+
 def run(ctx: Ctx) -> None:
     data = read_json(ctx.job, INPUT)
     segments = data.get("segments", [])
 
-    engine = get_tts(ctx.config)
     narration_dir = ctx.job / "narration"
     narration_dir.mkdir(parents=True, exist_ok=True)
 
+    engines: dict[str, TTSEngine] = {}          # 按 voice 名缓存引擎，同一 voice 不重复构造
     out_segments: list[dict] = []
     skipped = 0
     for seg in segments:
@@ -34,6 +47,11 @@ def run(ctx: Ctx) -> None:
             skipped += 1
             continue
         seg_id = int(seg.get("id", 0))
+        voice = _voice_for(seg.get("gender"), ctx)
+        engine = engines.get(voice)
+        if engine is None:
+            engine = get_tts(ctx.config, voice=voice)
+            engines[voice] = engine
         audio_bytes, _words = engine.synth(zh)
         name = f"n{seg_id:03d}.mp3"
         path = narration_dir / name
@@ -45,6 +63,7 @@ def run(ctx: Ctx) -> None:
             "file": f"narration/{name}",
             "tts_dur": dur,
             "zh": zh,
+            "voice": voice,                       # 调试核对：这段实际用了哪个音色
         })
 
     if skipped:

@@ -74,6 +74,52 @@ def test_fallback_english_zh_is_synthesized_gracefully(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# P7 T9 — gender-matched voice selection
+# ---------------------------------------------------------------------------
+
+def test_gender_selects_matching_voice(tmp_path):
+    """female -> tts.voice_female；male/None/缺失 -> 默认 tts.voice(不瞎猜)。
+    选中的 voice 要记进 narration.json 每段的 "voice" 字段供调试核对。"""
+    ctx = _ctx(tmp_path)
+    _write_zh_script(ctx, [
+        {"id": 0, "start": 0.0, "end": 1.0, "en": "Hi", "zh": "你好", "gender": "female"},
+        {"id": 1, "start": 1.0, "end": 2.0, "en": "Yo", "zh": "喂", "gender": "male"},
+        {"id": 2, "start": 2.0, "end": 3.0, "en": "Hey", "zh": "嘿", "gender": None},
+        {"id": 3, "start": 3.0, "end": 4.0, "en": "Sup", "zh": "咦"},  # no gender key at all
+    ])
+
+    d4.run(ctx)
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    voices = {s["id"]: s["voice"] for s in out["segments"]}
+    assert voices[0] == "zh-CN-XiaoxiaoNeural"   # female -> female voice
+    assert voices[1] == "zh-CN-YunyangNeural"    # male -> default voice
+    assert voices[2] == "zh-CN-YunyangNeural"    # unknown (null) -> default voice
+    assert voices[3] == "zh-CN-YunyangNeural"    # missing gender key -> default voice
+    assert ctx.warnings == []
+    for s in out["segments"]:
+        assert (ctx.job / s["file"]).exists()
+
+
+def test_gender_voice_config_overrides_are_honored(tmp_path):
+    """自定义 tts.voice / tts.voice_female 要被实际用上，不是硬编码默认值。"""
+    ctx = _ctx(tmp_path, {"tts": {
+        "provider": "fake", "voice": "zh-CN-CustomMale", "voice_female": "zh-CN-CustomFemale",
+    }})
+    _write_zh_script(ctx, [
+        {"id": 0, "start": 0.0, "end": 1.0, "en": "Hi", "zh": "你好", "gender": "female"},
+        {"id": 1, "start": 1.0, "end": 2.0, "en": "Yo", "zh": "喂", "gender": "male"},
+    ])
+
+    d4.run(ctx)
+
+    out = read_json(ctx.job, d4.OUTPUT)
+    voices = {s["id"]: s["voice"] for s in out["segments"]}
+    assert voices[0] == "zh-CN-CustomFemale"
+    assert voices[1] == "zh-CN-CustomMale"
+
+
+# ---------------------------------------------------------------------------
 # empty-zh segment — skipped + warned, other segments unaffected
 # ---------------------------------------------------------------------------
 

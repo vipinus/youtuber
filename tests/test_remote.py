@@ -38,6 +38,21 @@ def test_fake_remote_gpu_writes_valid_transcript_and_audio(tmp_path):
     assert "audio" in probe.stdout            # 必须是真正可解码的音频，不是占位字节
 
 
+def test_fake_remote_gpu_transcript_segments_have_gender_covering_both_paths(tmp_path):
+    """P7 T9：罐头 transcript 必须带 gender 字段，且一男一女都出现——下游
+    d3/d4 的性别匹配配音测试才能离线覆盖两条路径。"""
+    audio = tmp_path / "in.wav"
+    audio.write_bytes(b"\x00")
+    out_dir = tmp_path / "out"
+
+    result = FakeRemoteGPU().transcribe_separate(audio, out_dir)
+    data = json.loads(result["transcript"].read_text(encoding="utf-8"))
+
+    genders = [seg["gender"] for seg in data["segments"]]
+    assert "male" in genders
+    assert "female" in genders
+
+
 def test_fake_remote_gpu_creates_out_dir_if_missing(tmp_path):
     audio = tmp_path / "in.wav"
     audio.write_bytes(b"\x00")

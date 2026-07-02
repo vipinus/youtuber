@@ -7,7 +7,8 @@ llm:
   script_provider: gemini
 tts:
   provider: edge            # edge | fake
-  voice: zh-CN-YunyangNeural
+  voice: zh-CN-YunyangNeural       # 默认男声旁白；段 gender=="male"/null/缺失都落它(不确定不瞎猜)
+  voice_female: zh-CN-XiaoxiaoNeural  # P7 T9 性别匹配配音：段 gender=="female" 时用它(修用户反馈的女声画面配男声)
   rate: "+0%"               # 正常语速(用户定)。慢速会让配音溢出时间槽(d7有atempo防撞兜底)
 media:
   provider: archive         # archive(archive.org PD影片,动态贴题) | nasa(静图) | fake

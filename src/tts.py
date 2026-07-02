@@ -65,13 +65,15 @@ class EdgeTTS:
         return asyncio.run(_go())
 
 
-def get_tts(config: Config) -> TTSEngine:
+def get_tts(config: Config, voice: str | None = None) -> TTSEngine:
+    """`voice` 可选覆盖 config 里的 tts.voice——P7 T9 性别匹配配音用它按段选
+    男声/女声引擎。FakeTTS 分支忽略 voice（离线测试始终确定性、不触网）。"""
     provider = config.get("tts.provider", "edge")
     if provider == "fake":
         return FakeTTS()
     if provider == "edge":
         return EdgeTTS(
-            config.get("tts.voice", "zh-CN-YunyangNeural"),
+            voice or config.get("tts.voice", "zh-CN-YunyangNeural"),
             config.get("tts.rate", "-8%"),
         )
     raise ValueError(f"未知 tts provider: {provider}")

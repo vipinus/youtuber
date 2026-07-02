@@ -81,6 +81,10 @@ def run(ctx: Ctx) -> None:
                 "end": seg.get("end"),
                 "en": seg.get("text", ""),
                 "zh": zh,
+                # P7 T9：透传 d2_gpu(zion 侧基频估计)写入的说话人性别，供 d4_tts
+                # 挑男/女声。转录段没有该字段(旧数据/检测失败)时落 None——绝不
+                # 瞎猜，d4 会按 None 走默认男声旁白。
+                "gender": seg.get("gender"),
             }
         )
 

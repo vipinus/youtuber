@@ -51,8 +51,11 @@ class FakeRemoteGPU:
         transcript = {
             "duration": 5.0,
             "segments": [
-                {"start": 0.0, "end": 2.0, "text": "This is a fake transcript segment."},
-                {"start": 2.0, "end": 5.0, "text": "It exists purely for offline tests."},
+                # gender 覆盖两条路径（P7 T9 性别匹配配音离线可测）：一男一女。
+                {"start": 0.0, "end": 2.0, "text": "This is a fake transcript segment.",
+                 "gender": "male"},
+                {"start": 2.0, "end": 5.0, "text": "It exists purely for offline tests.",
+                 "gender": "female"},
             ],
         }
         transcript_path = out_dir / "transcript.json"
