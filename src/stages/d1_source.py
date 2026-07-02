@@ -1,0 +1,206 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from src.context import Ctx
+from src.media import _ARCHIVE_SEARCH_COLLECTIONS, _is_blocked, _norm_license
+from src.util.jobs import write_json
+
+OUTPUT = "source.mp4"
+META_OUTPUT = "source.json"
+
+SEARCH_URL = "https://archive.org/advancedsearch.php"
+METADATA_URL = "https://archive.org/metadata"
+
+DEFAULT_QUERY = "space OR apollo OR NASA OR planet"
+DEFAULT_MIN_SEC = 300
+DEFAULT_MAX_SEC = 1800
+DEFAULT_MAX_BYTES = 500_000_000       # ~500MB：整片要清晰但不要单片吃满磁盘/带宽
+DEFAULT_ROWS = 30
+
+# live 探针实测坑（同 s6 ArchiveVideo）：几KB的占位/损坏衍生文件（如 "Download.mp4"）
+# 若不设下限会被误当"可用文件"选中。
+_MIN_PLAUSIBLE_VIDEO_BYTES = 200_000
+
+# archive.org 对没带 User-Agent 的请求（含 urllib 默认 UA）经常直接回空 {}——
+# 不是 404/500，是"看起来成功但没有数据"，必须显式带一个像样的 UA。
+_UA = {"User-Agent": "Mozilla/5.0 (compatible; ufo-doc-pipeline/1.0; +https://archive.org/details/prelinger)"}
+
+
+def _get(url: str, *, params: dict | None = None, timeout: int = 20, stream: bool = False):
+    """统一带 UA 的 GET（archive.org 需要真实 User-Agent，否则可能回空 {}）。"""
+    import requests
+
+    r = requests.get(url, params=params, headers=_UA, timeout=timeout, stream=stream)
+    r.raise_for_status()
+    return r
+
+
+def _search(query: str, collections: tuple[str, ...], rows: int = DEFAULT_ROWS) -> list[dict]:
+    """限定在可信 PD 集合内搜（护栏#2 的前置门）——不限定会捞到 mis-tag 的版权内容
+    （实测：开放搜索能捞到被标 PD 的 GTA 游戏录屏）。按下载量降序，优先热门（更可能是
+    完整正片而非用户上传的碎片/预告）。"""
+    cols = " OR ".join(collections)
+    params = {
+        "q": f"({query}) AND mediatype:movies AND collection:({cols})",
+        "fl[]": ["identifier", "title", "licenseurl", "collection", "subject", "description"],
+        "sort[]": "downloads desc",
+        "rows": rows,
+        "output": "json",
+    }
+    r = _get(SEARCH_URL, params=params)
+    return (r.json().get("response") or {}).get("docs", [])
+
+
+def _fetch_metadata(identifier: str) -> dict:
+    r = _get(f"{METADATA_URL}/{identifier}")
+    return r.json()
+
+
+def _join(v) -> str:
+    return " ".join(v) if isinstance(v, list) else str(v or "")
+
+
+def _parse_duration(length) -> float:
+    """metadata.files[].length 有的是纯秒数字符串("187.32")，有的是 HH:MM:SS/MM:SS——
+    两种都要能解析；解析失败一律当 0（后续时长门会自然拒绝）。"""
+    if length is None:
+        return 0.0
+    s = str(length).strip()
+    if not s:
+        return 0.0
+    try:
+        return float(s)
+    except ValueError:
+        pass
+    try:
+        parts = [float(p) for p in s.split(":")]
+    except ValueError:
+        return 0.0
+    secs = 0.0
+    for p in parts:
+        secs = secs * 60 + p
+    return secs
+
+
+def _size_of(f: dict) -> int:
+    try:
+        return int(f.get("size") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _pixels(f: dict) -> int:
+    try:
+        return int(f.get("width") or 0) * int(f.get("height") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _resolution_of(f: dict) -> str:
+    w, h = f.get("width"), f.get("height")
+    if w and h:
+        return f"{w}x{h}"
+    return "unknown"
+
+
+def _pick_video_file(
+    files: list[dict], min_sec: float, max_sec: float, max_bytes: int
+) -> tuple[dict, float] | None:
+    """整片要清晰：mp4 优先，按分辨率(退化到体积)从高到低尝试；超过 max_bytes 的
+    直接跳过尝试下一档而非拒绝整条 item(常见：附带体积超大的母版文件旁边有合适的
+    mp4 派生档)。占位/损坏小文件与时长不在范围内的一律跳过。全不过 -> None。"""
+    mp4s = [f for f in files if str(f.get("name", "")).lower().endswith(".mp4")]
+    if not mp4s:
+        return None
+
+    ranked = sorted(mp4s, key=lambda f: (_pixels(f), _size_of(f)), reverse=True)
+    for f in ranked:
+        size = _size_of(f)
+        if size < _MIN_PLAUSIBLE_VIDEO_BYTES or size > max_bytes:
+            continue
+        dur = _parse_duration(f.get("length"))
+        if not (min_sec <= dur <= max_sec):
+            continue
+        return f, dur
+    return None
+
+
+def _attribution(title: str, collection) -> str:
+    cols = collection if isinstance(collection, list) else ([collection] if collection else [])
+    cols_norm = {str(c).strip().lower() for c in cols if c}
+    if "nasa" in cols_norm:
+        return f"NASA / {title}"
+    return f"Internet Archive / {title}"
+
+
+def _download(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    r = _get(url, timeout=60, stream=True)
+    with open(dest, "wb") as fh:
+        for chunk in r.iter_content(chunk_size=1 << 16):
+            if chunk:
+                fh.write(chunk)
+
+
+def run(ctx: Ctx) -> None:
+    cfg = ctx.config
+    query = cfg.get("p7.query", DEFAULT_QUERY)
+    min_sec = cfg.get("p7.min_sec", DEFAULT_MIN_SEC)
+    max_sec = cfg.get("p7.max_sec", DEFAULT_MAX_SEC)
+    max_bytes = cfg.get("p7.max_bytes", DEFAULT_MAX_BYTES)
+    collections = tuple(cfg.get("p7.collections", list(_ARCHIVE_SEARCH_COLLECTIONS)))
+
+    docs = _search(query, collections)
+
+    for d in docs:
+        identifier = d.get("identifier")
+        if not identifier:
+            continue
+
+        try:
+            meta = _fetch_metadata(identifier)
+        except Exception as e:
+            ctx.warn(f"d1_source: {identifier} metadata 获取失败({type(e).__name__})，跳过")
+            continue
+
+        files = meta.get("files") or []
+        if not files:
+            # darkened/下架条目 metadata.files 为空——即便 search 阶段过了白名单也要跳过
+            ctx.warn(f"d1_source: {identifier} 无可用 files（可能已下架），跳过")
+            continue
+
+        info = meta.get("metadata") or {}
+        # 纵深防御：护栏#2 在 metadata 上二次核验，不信任 search 阶段的结果
+        token = _norm_license(info.get("licenseurl"), info.get("collection"))
+        if token is None:
+            continue
+
+        title = info.get("title") or d.get("title") or identifier
+        if _is_blocked(str(title), _join(info.get("subject")), _join(info.get("description"))):
+            continue
+
+        picked = _pick_video_file(files, min_sec, max_sec, max_bytes)
+        if picked is None:
+            continue
+        f, duration = picked
+
+        url = f"https://archive.org/download/{identifier}/{f['name']}"
+        _download(url, ctx.job / OUTPUT)
+
+        write_json(ctx.job, META_OUTPUT, {
+            "identifier": identifier,
+            "title": title,
+            "license": token,
+            "attribution": _attribution(title, info.get("collection")),
+            "duration": duration,
+            "source_url": url,
+            "resolution": _resolution_of(f),
+        })
+        return
+
+    raise RuntimeError(
+        f"d1_source: 未找到符合条件的公有领域纪录片"
+        f"(query={query!r}, {min_sec}-{max_sec}s, collections={collections}) — "
+        "换题材/放宽 p7.min_sec/p7.max_sec 后重试"
+    )

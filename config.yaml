@@ -27,6 +27,19 @@ video:
 guardrails:
   min_documented_facts: 3
   allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
+p7:                        # P7 整片翻译管线：d1_source 选片参数(首题材 太空/NASA)
+  query: "space OR apollo OR NASA OR planet"
+  min_sec: 300              # 5min 下限：太短不算"整片纪录片"
+  max_sec: 1800             # 30min 上限：MVP 限时长，控制转录/下载耗时
+  max_bytes: 500000000      # ~500MB 单文件上限：整片要清晰但不下单片吃满带宽/磁盘的母版
+  collections:               # 复用 src/media.py 的可信 PD 集合白名单，不擅自扩大
+    - prelinger
+    - FedFlix
+    - usgovfilms
+    - us-national-archives
+    - nasa
+    - publicmovies
+    - openbeelden
 publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
   visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
