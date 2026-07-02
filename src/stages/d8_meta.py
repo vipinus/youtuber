@@ -165,7 +165,11 @@ def run(ctx: Ctx) -> None:
 
     image_prompt = meta.get("image_prompt") or DEFAULT_IMAGE_PROMPT
     remote = get_remote(ctx.config)
-    bg_path = remote.generate_image(image_prompt, ctx.job / "thumb_bg.png")
+    try:
+        bg_path = remote.generate_image(image_prompt, ctx.job / "thumb_bg.png")
+    except Exception as e:                # zion 挂/SDXL 失败不该中止整条 run；回退纯色底，视频照发
+        ctx.warn(f"{ctx.slug}: d8_meta SDXL 封面背景生成失败({type(e).__name__})，改用纯色底")
+        bg_path = ctx.job / "thumb_bg_missing.png"   # 不存在 → make_thumbnail 自动回退纯色底
 
     title = meta.get("title") or source.get("title") or "未解之谜"
     watermark = Path(ctx.config.get("p7.watermark", DEFAULT_WATERMARK))

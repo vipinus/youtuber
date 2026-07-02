@@ -180,3 +180,31 @@ def test_wrap_title_splits_long_title_no_truncation():
     assert "".join(lines) == t                      # 不丢一个字
     assert lines[0].endswith("：")                   # 在标点处断
     assert _wrap_title("短标题") == ["短标题"]        # 短标题单行
+
+
+def test_d8_survives_sdxl_failure_falls_back(tmp_path, monkeypatch):
+    """zion/SDXL 挂了不该中止整条 run:回退纯色底封面 + 仍产出 meta.json,视频照发。"""
+    import src.stages.d8_meta as d8
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    from src.util.jobs import write_json
+    from PIL import Image
+    import json
+
+    class _BoomRemote:
+        def generate_image(self, prompt, out): raise RuntimeError("zion down")
+        def transcribe_separate(self, a, o): raise AssertionError
+
+    canned = json.dumps({"title": "测试标题", "description": "描述", "tags": ["a"],
+                         "image_prompt": "space"})
+    ctx = Ctx(slug="c", config=Config({"remote": {"provider": "fake"}}),
+              root=tmp_path, llm=FakeLLM(canned=canned))
+    write_json(ctx.job, d8.INPUT, {"duration": 5, "segments": [{"id": 0, "start": 0,
+               "end": 2, "en": "hi", "zh": "你好"}]})
+    write_json(ctx.job, "source.json", {"title": "X", "attribution": "NASA / X"})
+    monkeypatch.setattr(d8, "get_remote", lambda cfg: _BoomRemote())
+    d8.run(ctx)                                   # 不应抛异常
+    assert (ctx.job / "thumb.jpg").exists()
+    assert Image.open(ctx.job / "thumb.jpg").size == (1280, 720)
+    assert any("SDXL" in w for w in ctx.warnings)
