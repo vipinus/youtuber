@@ -5,19 +5,31 @@ from typing import Protocol
 
 from src.config import Config
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# 需要完整的 youtube scope 才能管理播放列表（playlists/playlistItems）；
+# 仅 .upload 做不到。该完整 scope 已覆盖上传权限，所以是替换而非追加。
+# 换 scope 后老 token 权限不够，playlist 调用会 403 insufficientPermissions——
+# 见 src/stages/s9_publish.py 的容错与 docs/youtube-oauth-setup.md 的重新授权说明。
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
 
 class Uploader(Protocol):
     def upload(self, video: Path, meta: dict, thumb: Path, visibility: str) -> dict: ...
+    def add_to_playlist(self, video_id: str, playlist_title: str) -> str: ...
 
 
 class FakeUploader:
-    """离线：确定性返回假 videoId，不联网。"""
+    """离线：确定性返回假 videoId/playlistId，不联网。"""
+
+    def __init__(self):
+        self.playlist_calls: list[tuple[str, str]] = []
 
     def upload(self, video: Path, meta: dict, thumb: Path, visibility: str) -> dict:
         return {"videoId": "FAKE12345", "url": "https://youtu.be/FAKE12345",
                 "status": visibility}
+
+    def add_to_playlist(self, video_id: str, playlist_title: str) -> str:
+        self.playlist_calls.append((video_id, playlist_title))
+        return "FAKEPL123"
 
 
 def load_creds(token: str, client_secret: str, scopes=SCOPES):
@@ -67,6 +79,39 @@ class YouTubeUploader:
             except Exception as e:  # noqa: BLE001 — 封面失败不应作废整次上传
                 result["thumbnail_error"] = str(e)
         return result
+
+    def add_to_playlist(self, video_id: str, playlist_title: str) -> str:
+        """把视频加入标题匹配的播放列表；不存在则创建（播放列表本身公开，
+        列表里的视频是否可见仍取决于视频自身的 privacyStatus）。返回 playlistId。"""
+        playlist_id = self._find_playlist(playlist_title)
+        if playlist_id is None:
+            resp = self._yt.playlists().insert(
+                part="snippet,status",
+                body={"snippet": {"title": playlist_title},
+                      "status": {"privacyStatus": "public"}},
+            ).execute()
+            playlist_id = resp["id"]
+        self._yt.playlistItems().insert(
+            part="snippet",
+            body={"snippet": {"playlistId": playlist_id,
+                               "resourceId": {"kind": "youtube#video", "videoId": video_id}}},
+        ).execute()
+        return playlist_id
+
+    def _find_playlist(self, title: str) -> str | None:
+        """在自己的播放列表里按标题精确匹配（翻页找全，别漏了 50 个之后的）。"""
+        page_token = None
+        while True:
+            kw = {"part": "snippet", "mine": True, "maxResults": 50}
+            if page_token:
+                kw["pageToken"] = page_token
+            resp = self._yt.playlists().list(**kw).execute()
+            for item in resp.get("items", []):
+                if item.get("snippet", {}).get("title") == title:
+                    return item["id"]
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                return None
 
 
 def get_uploader(config: Config) -> Uploader:

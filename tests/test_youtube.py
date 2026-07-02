@@ -50,6 +50,135 @@ def test_load_creds_persists_refreshed_token(tmp_path, monkeypatch):
     assert tokfile.read_text() == '{"refreshed": true}'   # 刷新后的 token 已落盘
 
 
+def test_scopes_is_full_youtube_scope():
+    """播放列表管理（playlists/playlistItems）需要完整 scope，仅 .upload 做不到。"""
+    from src.youtube import SCOPES
+    assert SCOPES == ["https://www.googleapis.com/auth/youtube"]
+
+
+def test_fake_uploader_add_to_playlist_records_call():
+    up = FakeUploader()
+    pl_id = up.add_to_playlist("VID1", "太空探索/NASA")
+    assert pl_id == "FAKEPL123"
+    assert up.playlist_calls == [("VID1", "太空探索/NASA")]
+
+
+def test_add_to_playlist_finds_existing():
+    """标题已存在的播放列表：不新建，直接加视频进去。"""
+    calls = {"insert_playlist": 0, "insert_item": None}
+
+    class _Exec:
+        def __init__(self, ret):
+            self._ret = ret
+        def execute(self):
+            return self._ret
+
+    class _Playlists:
+        def list(self, **kw):
+            return _Exec({"items": [{"id": "PL_EXIST", "snippet": {"title": "太空探索/NASA"}}]})
+        def insert(self, **kw):
+            calls["insert_playlist"] += 1
+            return _Exec({"id": "PL_NEW"})
+
+    class _PlaylistItems:
+        def insert(self, **kw):
+            calls["insert_item"] = kw
+            return _Exec({"id": "PLI1"})
+
+    class _YT:
+        def playlists(self):
+            return _Playlists()
+        def playlistItems(self):
+            return _PlaylistItems()
+
+    up = YouTubeUploader.__new__(YouTubeUploader)  # 跳过会 build() 的 __init__
+    up._yt = _YT()
+    pl_id = up.add_to_playlist("VID1", "太空探索/NASA")
+
+    assert pl_id == "PL_EXIST"
+    assert calls["insert_playlist"] == 0            # 已存在，不该新建
+    assert calls["insert_item"]["body"]["snippet"]["playlistId"] == "PL_EXIST"
+    assert calls["insert_item"]["body"]["snippet"]["resourceId"]["videoId"] == "VID1"
+
+
+def test_add_to_playlist_creates_when_missing():
+    """标题不存在：先建播放列表（公开），再把视频插进去。"""
+    calls = {"insert_playlist_body": None, "insert_item": None}
+
+    class _Exec:
+        def __init__(self, ret):
+            self._ret = ret
+        def execute(self):
+            return self._ret
+
+    class _Playlists:
+        def list(self, **kw):
+            return _Exec({"items": [{"id": "OTHER", "snippet": {"title": "别的列表"}}]})
+        def insert(self, **kw):
+            calls["insert_playlist_body"] = kw["body"]
+            return _Exec({"id": "PL_NEW"})
+
+    class _PlaylistItems:
+        def insert(self, **kw):
+            calls["insert_item"] = kw
+            return _Exec({"id": "PLI2"})
+
+    class _YT:
+        def playlists(self):
+            return _Playlists()
+        def playlistItems(self):
+            return _PlaylistItems()
+
+    up = YouTubeUploader.__new__(YouTubeUploader)
+    up._yt = _YT()
+    pl_id = up.add_to_playlist("VID2", "太空探索/NASA")
+
+    assert pl_id == "PL_NEW"
+    assert calls["insert_playlist_body"]["snippet"]["title"] == "太空探索/NASA"
+    assert calls["insert_playlist_body"]["status"]["privacyStatus"] == "public"
+    assert calls["insert_item"]["body"]["snippet"]["playlistId"] == "PL_NEW"
+    assert calls["insert_item"]["body"]["snippet"]["resourceId"]["videoId"] == "VID2"
+
+
+def test_add_to_playlist_paginates_search():
+    """播放列表超过一页时要翻页找全，别漏掉第 51 个之后的同名列表。"""
+    pages = [
+        {"items": [{"id": "PL1", "snippet": {"title": "别的"}}], "nextPageToken": "p2"},
+        {"items": [{"id": "PL2", "snippet": {"title": "太空探索/NASA"}}]},
+    ]
+    seen_tokens = []
+
+    class _Exec:
+        def __init__(self, ret):
+            self._ret = ret
+        def execute(self):
+            return self._ret
+
+    class _Playlists:
+        def list(self, **kw):
+            seen_tokens.append(kw.get("pageToken"))
+            return _Exec(pages[len(seen_tokens) - 1])
+        def insert(self, **kw):
+            raise AssertionError("不该新建，第二页已经找到同名列表了")
+
+    class _PlaylistItems:
+        def insert(self, **kw):
+            return _Exec({"id": "PLI3"})
+
+    class _YT:
+        def playlists(self):
+            return _Playlists()
+        def playlistItems(self):
+            return _PlaylistItems()
+
+    up = YouTubeUploader.__new__(YouTubeUploader)
+    up._yt = _YT()
+    pl_id = up.add_to_playlist("VID3", "太空探索/NASA")
+
+    assert pl_id == "PL2"
+    assert seen_tokens == [None, "p2"]
+
+
 def test_thumbnail_failure_keeps_video_id(tmp_path):
     """视频 insert 成功后封面 set 抛异常时，仍须返回 videoId（不能丢已上传的视频）。"""
     video = tmp_path / "v.mp4"; video.write_bytes(b"\x00" * 32)

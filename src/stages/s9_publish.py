@@ -25,4 +25,20 @@ def run(ctx: Ctx) -> None:
     visibility = ctx.config.get("publish.visibility", "private")  # 护栏#3: 从不默认公开
     uploader = get_uploader(ctx.config)
     result = uploader.upload(video, meta, ctx.job / "thumb.jpg", visibility)
+
+    playlist_title = ctx.config.get("publish.playlist", "")
+    if playlist_title:
+        try:
+            playlist_id = uploader.add_to_playlist(result["videoId"], playlist_title)
+            result["playlist"] = playlist_title
+            result["playlistId"] = playlist_id
+        except Exception as e:  # noqa: BLE001 — 播放列表失败不能作废已成功的上传
+            msg = str(e)
+            # scope 从 .upload 换成完整 youtube 后，老 token 会 403 insufficientPermissions；
+            # 这种情况提示用户重新走一次授权，而不是让 run 直接挂掉。
+            hint = ("；权限不足，请重新执行 python -m src.auth_youtube 重新授权（补齐播放列表权限）"
+                    if "insufficient" in msg.lower() else "")
+            result["playlist_error"] = msg + hint
+            ctx.warn(f"{ctx.slug}: 加入播放列表 {playlist_title!r} 失败：{msg}{hint}")
+
     write_json(ctx.job, OUTPUT, result)

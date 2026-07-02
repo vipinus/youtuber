@@ -49,6 +49,7 @@ p7:                        # P7 整片翻译管线：d1_source 选片参数(首�
 publish:
   auto_upload: true         # 全自动上传 YouTube（用户要求）
   visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
+  playlist: "太空探索/NASA"  # 上传成功后自动加入的播放列表标题（找不到就新建）；换题材改这里；留空则不入列
 paths:
   jobs_root: jobs
   seeds: seeds/cases.yaml
