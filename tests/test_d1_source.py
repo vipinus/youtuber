@@ -519,3 +519,22 @@ def test_pick_video_file_min_height_gate():
     assert _pick_video_file([files[0]], 300, 1800, 10**9, min_height=700) is None  # 只有SD→整item拒
     f2, _ = _pick_video_file([files[0]], 300, 1800, 10**9)                          # 不设门→SD可用
     assert f2["name"] == "sd.mp4"
+
+
+def test_search_rows_configurable(monkeypatch, tmp_path):
+    """p7.rows 控制候选池深度(HD门+去重把前30热门滤光的真实case)。"""
+    import src.stages.d1_source as d1
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    seen = {}
+    def spy_search(q, cols, rows=d1.DEFAULT_ROWS):
+        seen["rows"] = rows
+        return []
+    monkeypatch.setattr(d1, "_search", spy_search)
+    ctx = Ctx(slug="c", config=Config({"p7": {"rows": 300}}), root=tmp_path, llm=FakeLLM())
+    try:
+        d1.run(ctx)
+    except RuntimeError:
+        pass                              # 空结果必然 raise,这里只验 rows 透传
+    assert seen["rows"] == 300

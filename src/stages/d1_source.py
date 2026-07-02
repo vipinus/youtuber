@@ -190,8 +190,9 @@ def run(ctx: Ctx) -> None:
     max_sec = cfg.get("p7.max_sec", DEFAULT_MAX_SEC)
     max_bytes = cfg.get("p7.max_bytes", DEFAULT_MAX_BYTES)
     collections = tuple(cfg.get("p7.collections", list(_ARCHIVE_SEARCH_COLLECTIONS)))
+    rows = int(cfg.get("p7.rows", DEFAULT_ROWS))   # HD门槛+登记去重会滤掉大量热门,池子要够深
 
-    docs = _search(query, collections)
+    docs = _search(query, collections, rows=rows)
 
     # P7 T16：登记表去重——已发布过的、以及同批其它 job 已下载但还没发布完
     # 的（source.json 存在），一律跳过，不然同一条 query 每次都会重挑到
