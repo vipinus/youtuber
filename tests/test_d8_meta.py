@@ -304,3 +304,25 @@ def test_d8_survives_sdxl_failure_falls_back(tmp_path, monkeypatch):
     assert (ctx.job / "thumb.jpg").exists()
     assert Image.open(ctx.job / "thumb.jpg").size == (1280, 720)
     assert any("SDXL" in w for w in ctx.warnings)
+
+
+def test_sdxl_failure_falls_back_to_source_frame(monkeypatch, tmp_path):
+    """SDXL 挂了→先抽源片帧当封面背景(第三次人工救封面后固化);源片也没有→纯色。"""
+    import subprocess
+    from src.stages import d8_meta
+
+    ctx = _ctx(tmp_path, _CANNED)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+                    "-i", "testsrc=duration=5:size=320x240:rate=10",
+                    str(ctx.job / "source.mp4")], capture_output=True, check=True)
+
+    class BoomRemote:
+        def generate_image(self, prompt, dest):
+            raise RuntimeError("CUDA out of memory")
+    monkeypatch.setattr(d8_meta, "get_remote", lambda cfg: BoomRemote())
+
+    run(ctx)
+
+    assert (ctx.job / "thumb.jpg").exists()
+    assert (ctx.job / "thumb_bg.png").exists()          # 抽帧成功落盘
+    assert any("抽帧兜底" in w for w in ctx.warnings)

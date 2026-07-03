@@ -241,9 +241,14 @@ def run(ctx: Ctx) -> None:
     remote = get_remote(ctx.config)
     try:
         bg_path = remote.generate_image(image_prompt, ctx.job / "thumb_bg.png")
-    except Exception as e:                # zion 挂/SDXL 失败不该中止整条 run；回退纯色底，视频照发
-        ctx.warn(f"{ctx.slug}: d8_meta SDXL 封面背景生成失败({type(e).__name__})，改用纯色底")
-        bg_path = ctx.job / "thumb_bg_missing.png"   # 不存在 → make_thumbnail 自动回退纯色底
+    except Exception as e:                # zion 挂/SDXL 失败不该中止整条 run；抽帧兜底，视频照发
+        from src.stages.d9c_publish_en import _extract_frame_bg
+        bg_path = ctx.job / "thumb_bg.png"
+        if _extract_frame_bg(ctx.job / "source.mp4", bg_path):   # 源片22%处抽帧(同 d9c;三次人工救封面后固化)
+            ctx.warn(f"{ctx.slug}: d8_meta SDXL 封面背景生成失败({type(e).__name__})，已从源片抽帧兜底")
+        else:
+            ctx.warn(f"{ctx.slug}: d8_meta SDXL 封面背景生成失败({type(e).__name__})，改用纯色底")
+            bg_path = ctx.job / "thumb_bg_missing.png"   # 不存在 → make_thumbnail 自动回退纯色底
 
     title = meta.get("title") or source.get("title") or "未解之谜"
     watermark = Path(ctx.config.get("p7.watermark", DEFAULT_WATERMARK))
