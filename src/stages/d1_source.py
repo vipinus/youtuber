@@ -203,6 +203,20 @@ def _yt_list_channel(ytdlp: str, channel: str, limit: int) -> list[dict]:
     return [e for e in (data.get("entries") or []) if e]
 
 
+def _yt_view_count(ytdlp: str, video_id: str) -> int:
+    """单条视频真实播放量(频道扁平列表里 view_count 恒为空,实测 2026-07-03;
+    sort=p 热门排序参数也被 yt-dlp 忽略——只能逐条 --print view_count,不下载)。"""
+    import subprocess
+    try:
+        out = subprocess.run(
+            [ytdlp, "-s", "--print", "view_count", "--no-playlist",
+             f"https://www.youtube.com/watch?v={video_id}"],
+            capture_output=True, text=True, timeout=60, check=True)
+        return int(out.stdout.strip().splitlines()[-1])
+    except Exception:
+        return 0
+
+
 def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_bytes: int) -> None:
     """按高度门槛下载合并成 mp4;无满足门槛的格式时 yt-dlp 非零退出,调用方跳过该片。"""
     import subprocess
@@ -251,22 +265,19 @@ def _run_youtube_gov(ctx: Ctx) -> None:
 
     skip_ids = published_identifiers(ctx.root) | in_flight_identifiers(ctx.root, ctx.slug)
 
-    # 用户定(2026-07-03):全部白名单频道汇总后按播放量降序选——流量最高的先做
+    # 用户定(2026-07-03):全部白名单频道汇总后按播放量降序选——流量最高的先做。
+    # 顺序:先过零成本门(去重/黑名单/无解说/时长),幸存者才逐条拉真实播放量再排序。
     pool: list[tuple[dict, str]] = []
     for channel in channels:
         try:
             pool += [(e, channel) for e in _yt_list_channel(ytdlp, channel, limit)]
         except Exception as e:
             ctx.warn(f"d1_source: 频道 {channel} 列表失败({type(e).__name__})，跳过")
-    pool.sort(key=lambda t: t[0].get("view_count") or 0, reverse=True)
 
+    survivors: list[tuple[dict, str]] = []
     for e, channel in pool:
         vid = e.get("id")
-        if not vid:
-            continue
-        identifier = f"yt:{vid}"
-        if identifier in skip_ids:
-            ctx.warn(f"d1_source: {identifier} 已发布/在途，跳过")
+        if not vid or f"yt:{vid}" in skip_ids:
             continue
         title = str(e.get("title") or vid)
         if _is_blocked(title, "", "") or not _looks_narrated(title, ""):
@@ -274,6 +285,16 @@ def _run_youtube_gov(ctx: Ctx) -> None:
         dur = float(e.get("duration") or 0)
         if not (min_sec <= dur <= max_sec):
             continue
+        survivors.append((e, channel))
+    for e, _ in survivors:
+        e["view_count"] = e.get("view_count") or _yt_view_count(ytdlp, e["id"])
+    survivors.sort(key=lambda t: t[0].get("view_count") or 0, reverse=True)
+
+    for e, channel in survivors:
+        vid = e["id"]
+        identifier = f"yt:{vid}"
+        title = str(e.get("title") or vid)
+        dur = float(e.get("duration") or 0)
         try:
             _yt_download(ytdlp, vid, ctx.job / OUTPUT, floor, max_bytes)
         except Exception as ex:
