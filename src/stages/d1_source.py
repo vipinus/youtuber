@@ -234,8 +234,10 @@ def run(ctx: Ctx) -> None:
             ctx.warn(f"d1_source: {identifier} 疑似无解说素材(纯画面/音乐)，跳过")
             continue
 
+        # 用户约束(2026-07-03):所有选片最低 HD——代码级地板 700,配置只能往上调不能往下破
+        # (自然类 480p 首发后用户定的硬门槛;配置里写低了也按 700 执行)
         picked = _pick_video_file(files, min_sec, max_sec, max_bytes,
-                                   min_height=cfg.get("p7.min_height", 0))
+                                   min_height=max(int(cfg.get("p7.min_height", 700)), 700))
         if picked is None:
             continue
         f, duration = picked

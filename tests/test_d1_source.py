@@ -85,12 +85,12 @@ def test_rejects_untrusted_or_no_license_candidate_and_picks_next(tmp_path, monk
             "metadata": {"licenseurl": "https://rightsstatements.org/vocab/InC/1.0/",
                          "collection": ["nasa"], "title": "Bad Copyrighted Doc"},
             "files": [{"name": "bad1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
         "good1": {
             "metadata": {"licenseurl": None, "collection": ["nasa"], "title": "Good NASA Doc"},
             "files": [{"name": "good1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -120,13 +120,13 @@ def test_rejects_content_blocked_doc_even_if_pd(tmp_path, monkeypatch):
                          "collection": ["usgovfilms"], "title": "Death Mills",
                          "subject": "Holocaust concentration camp"},
             "files": [{"name": "death1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
         "safe1": {
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Apollo 11 Mission Report"},
             "files": [{"name": "safe1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -155,7 +155,7 @@ def test_rejects_out_of_duration_and_skips_darkened_item(tmp_path, monkeypatch):
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Too Long Doc"},
             "files": [{"name": "toolong.mp4", "size": "300000", "length": "5000",
-                       "width": "640", "height": "480"}],   # 超过 max_sec
+                       "width": "1280", "height": "720"}],   # 超过 max_sec
         },
         "darkened": {
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
@@ -166,7 +166,7 @@ def test_rejects_out_of_duration_and_skips_darkened_item(tmp_path, monkeypatch):
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Just Right Doc"},
             "files": [{"name": "justright.mp4", "size": "300000", "length": "900",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -228,7 +228,7 @@ def test_attribution_falls_back_to_internet_archive_when_not_nasa(tmp_path, monk
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["prelinger"], "title": "Old Space Reel"},
             "files": [{"name": "prelinger1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -253,7 +253,7 @@ def test_raises_when_nothing_qualifies(tmp_path, monkeypatch):
             "metadata": {"licenseurl": "https://rightsstatements.org/vocab/InC/1.0/",
                          "collection": ["nasa"], "title": "Only Bad"},
             "files": [{"name": "onlybad.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -293,7 +293,7 @@ def test_pick_video_file_skips_tiny_placeholder_and_out_of_range():
         {"name": "placeholder.mp4", "size": "50000", "length": "600"},   # 太小
         {"name": "toolong.mp4", "size": "300000", "length": "5000"},     # 时长超范围
         {"name": "ok.mp4", "size": "300000", "length": "600",
-         "width": "640", "height": "480"},
+         "width": "1280", "height": "720"},
     ]
     picked = _pick_video_file(files, min_sec=300, max_sec=1800, max_bytes=500_000_000)
     assert picked is not None
@@ -365,13 +365,13 @@ def test_skips_already_published_candidate_and_picks_next(tmp_path, monkeypatch)
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Old Pick"},
             "files": [{"name": "already_done.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
         "fresh1": {
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Fresh Doc"},
             "files": [{"name": "fresh1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -414,13 +414,13 @@ def test_skips_in_flight_sibling_job_candidate(tmp_path, monkeypatch):
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Being Processed"},
             "files": [{"name": "in_flight1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
         "fresh2": {
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Fresh Doc Two"},
             "files": [{"name": "fresh2.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -448,7 +448,7 @@ def test_does_not_skip_own_slug_source_json(tmp_path, monkeypatch):
             "metadata": {"licenseurl": "http://creativecommons.org/licenses/publicdomain/",
                          "collection": ["nasa"], "title": "Same Doc"},
             "files": [{"name": "same1.mp4", "size": "300000", "length": "600",
-                       "width": "640", "height": "480"}],
+                       "width": "1280", "height": "720"}],
         },
     }
     _install_fake_get(monkeypatch, search_docs, metadata)
@@ -538,3 +538,28 @@ def test_search_rows_configurable(monkeypatch, tmp_path):
     except RuntimeError:
         pass                              # 空结果必然 raise,这里只验 rows 透传
     assert seen["rows"] == 300
+
+
+def test_run_enforces_hd_floor_even_if_config_lower(monkeypatch, tmp_path):
+    """用户硬约束(2026-07-03):p7.min_height 配 400 也按 700 执行(代码级地板)。"""
+    from src.stages import d1_source
+    captured = {}
+    def fake_pick(files, min_sec, max_sec, max_bytes, min_height=0):
+        captured["min_height"] = min_height
+        return None   # 不实际选中,只验门槛
+    monkeypatch.setattr(d1_source, "_pick_video_file", fake_pick)
+    monkeypatch.setattr(d1_source, "_search", lambda *a, **k: [{"identifier": "x1"}])
+    monkeypatch.setattr(d1_source, "_fetch_metadata", lambda ident: {
+        "metadata": {"title": "Wild Rivers Documentary", "licenseurl":
+                     "http://creativecommons.org/publicdomain/mark/1.0/"},
+        "files": [{"name": "a.mp4", "format": "MPEG4", "length": "600", "size": "5000000", "height": "720"}]})
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    ctx = Ctx(slug="hdfloor", config=Config({"p7": {"min_height": 400, "rows": 1}}),
+              root=tmp_path / "jobs", llm=FakeLLM())
+    try:
+        d1_source.run(ctx)
+    except Exception:
+        pass   # 池子空会 raise,不影响本测目的
+    assert captured["min_height"] == 700
