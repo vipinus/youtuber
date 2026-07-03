@@ -336,6 +336,23 @@ def nvenc_env(config: Config, base_env: dict | None = None) -> dict:
     return env
 
 
+def _ensure_fd_limit(need: int) -> None:
+    """把本进程(及其子进程 ffmpeg)的打开文件数软上限提到 need。
+    旁白第一遍合成给每段一个 `-i` 输入:1261 段(NASA+ Cosmic Dawn)撞上默认
+    soft=1024 → ffmpeg "Too many open files"。zion 硬限 524288,余量充足;
+    提不动(权限/平台)只告警级放行,让 ffmpeg 自己报错兜底。"""
+    import resource
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        if soft >= need:
+            return
+        target = need if hard == resource.RLIM_INFINITY else min(need, hard)
+        if target > soft:
+            resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError):
+        pass
+
+
 def run(ctx: Ctx) -> None:
     from src.util.restore import restore_from_archive
 
@@ -393,6 +410,7 @@ def run(ctx: Ctx) -> None:
             ctx.warn(f"{ctx.slug}: d7 有 {len(capped)} 段压到 atempo 上限 {MAX_TEMPO} 仍偏长"
                      f"(可能残留轻微重叠): seg {capped[:8]}")
         narration_path = job / NARRATION_TRACK
+        _ensure_fd_limit(len(segments) + 256)   # 每段一个输入fd;1261段撞默认1024上限(Cosmic Dawn真跑)
         cmd1 = build_narration_cmd(job, segments, video_dur, narration_path)
         proc1 = subprocess.run(cmd1, capture_output=True, text=True)
         if proc1.returncode != 0:

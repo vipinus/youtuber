@@ -1293,3 +1293,17 @@ def test_pick_bgm_track_filters_by_mood(tmp_path):
     assert pick_bgm_track(bgm, "s", warns.append) is not None
     assert pick_bgm_track(bgm, "s", warns.append, mood="somber") is not None
     assert not warns
+
+
+def test_ensure_fd_limit_raises_soft_limit():
+    """1261段旁白撞默认fd软限1024(Cosmic Dawn真跑)——软限按需提升,不超硬限。"""
+    import resource
+    from src.stages.d7_assemble import _ensure_fd_limit
+    soft0, hard0 = resource.getrlimit(resource.RLIMIT_NOFILE)
+    try:
+        need = min(soft0 + 512, hard0 if hard0 != resource.RLIM_INFINITY else soft0 + 512)
+        _ensure_fd_limit(need)
+        soft1, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        assert soft1 >= need
+    finally:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (soft0, hard0))
