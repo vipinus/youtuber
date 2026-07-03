@@ -1255,3 +1255,41 @@ def test_fitting_clip_not_trimmed():
             {"id": 1, "start": 3.0, "tts_dur": 1.0}]
     fc = build_narration_filter(segs, video_dur=10.0)
     assert "atempo=" in fc and "atrim=0:2.850" not in fc
+
+
+# ---------------------------------------------------------------------------
+# 按影片内容选 BGM(用户定 2026-07-03:不再全线同一首)
+# ---------------------------------------------------------------------------
+
+def test_infer_bgm_mood_keyword_buckets():
+    from src.stages.d7_assemble import infer_bgm_mood
+    assert infer_bgm_mood("Searching for Type D: A New Species of Killer Whale?") == "ocean"
+    assert infer_bgm_mood("Wolves of Yellowstone") == "nature"
+    assert infer_bgm_mood("NASA's Kepler Mission Announces Discovery") == "space"
+    assert infer_bgm_mood("Annual Budget Briefing") is None            # 命不中→None→全池
+
+
+def test_pick_bgm_track_filters_by_mood(tmp_path):
+    import json
+    from src.stages.d7_assemble import pick_bgm_track
+    bgm = tmp_path / "bgm"
+    bgm.mkdir()
+    tracks = [
+        {"file": "space1.mp3", "moods": ["space"], "attribution": "a"},
+        {"file": "ocean1.mp3", "moods": ["ocean"], "attribution": "b"},
+        {"file": "any1.mp3", "attribution": "c"},                      # 没配 moods=百搭
+    ]
+    for t in tracks:
+        (bgm / t["file"]).write_bytes(b"MP3")
+    (bgm / "bgm.json").write_text(json.dumps({"tracks": tracks}), encoding="utf-8")
+
+    warns = []
+    got = pick_bgm_track(bgm, "some-slug", warns.append, mood="ocean")
+    assert got["entry"]["file"] in ("ocean1.mp3", "any1.mp3")          # space 被滤掉
+    # 同 slug 同 mood 重跑选曲不变(确定性)
+    again = pick_bgm_track(bgm, "some-slug", warns.append, mood="ocean")
+    assert again["entry"]["file"] == got["entry"]["file"]
+    # mood=None → 全池;桶空(没有 somber 专属曲) → 回退全池不报错
+    assert pick_bgm_track(bgm, "s", warns.append) is not None
+    assert pick_bgm_track(bgm, "s", warns.append, mood="somber") is not None
+    assert not warns

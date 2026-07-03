@@ -135,7 +135,7 @@ def _build_clean_source(ctx) -> tuple[Path, dict] | None:
     (老行为),绝不挡上传。成功返回 (clean_path, 曲目条目) 供上传+简介署名。"""
     import subprocess
 
-    from src.stages.d7_assemble import pick_bgm_track
+    from src.stages.d7_assemble import infer_bgm_mood, pick_bgm_track
     from src.util.ffprobe import duration_sec
 
     from src.util.restore import restore_from_archive
@@ -147,8 +147,10 @@ def _build_clean_source(ctx) -> tuple[Path, dict] | None:
     if not vocals.exists():
         ctx.warn(f"{ctx.slug}: vocals.mp3 缺失(归档后没恢复?),英文版直传原声原片(可能吃版权认领)")
         return None
-    entry = pick_bgm_track(
-        Path(ctx.config.get("p7.bgm_dir", "assets/bgm")), ctx.slug, ctx.warn)
+    src_meta = read_json(ctx.job, INPUT) if (ctx.job / INPUT).exists() else {}
+    mood = infer_bgm_mood(str(src_meta.get("title", "")), str(src_meta.get("attribution", "")))
+    entry = pick_bgm_track(   # 与 d7 同输入同 slug → 中英版永远同一首曲子
+        Path(ctx.config.get("p7.bgm_dir", "assets/bgm")), ctx.slug, ctx.warn, mood=mood)
     if entry is None:
         return None
     try:

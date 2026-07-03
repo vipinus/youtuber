@@ -130,9 +130,38 @@ def build_narration_cmd(job: Path, segments: list[dict], video_dur: float, out_p
     return cmd
 
 
-def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None]) -> dict | None:
-    """从 `bgm_dir/bgm.json` 清单里按 slug 的 crc32 确定性挑一条(同 slug 永远同曲，
-    换 slug 可能换——不用 Date/random，保证同一 job 重跑选曲不变)。
+_MOOD_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    # 顺序即优先级:更具体的场景先命中(ocean 片名往往也含 nature 词)
+    ("ocean",     ("ocean", "sea", "whale", "orca", "marine", "fish", "reef", "coral",
+                   "underwater", "shark", "dolphin", "tide")),
+    ("nature",    ("wildlife", "national park", "forest", "bird", "bear", "salmon", "river",
+                   "wilderness", "refuge", "nature", "animal", "wolf", "wolves", "eagle",
+                   "everglades", "yellowstone", "conservation")),
+    ("space",     ("space", "nasa", "apollo", "orbit", "mars", "moon", "planet", "telescope",
+                   "shuttle", "astronaut", "kepler", "galaxy", "cosmos", "satellite", "rocket")),
+    ("somber",    ("war", "memorial", "disaster", "tragedy", "accident", "crash", "extinct",
+                   "abandoned", "ruins")),
+    ("uplifting", ("discovery", "celebration", "anniversary", "achievement", "triumph")),
+)
+
+
+def infer_bgm_mood(*texts: str) -> str | None:
+    """从片名/主题/描述关键词推断配乐情绪桶(用户定 2026-07-03:BGM 按影片内容换,
+    不再全线同一首)。刻意不走 LLM:确定性、零失败面、同片重跑同曲。命不中 → None
+    (选曲时退回全池)。"""
+    hay = " ".join(t or "" for t in texts).lower()
+    for mood, keys in _MOOD_KEYWORDS:
+        if any(k in hay for k in keys):
+            return mood
+    return None
+
+
+def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None],
+                   mood: str | None = None) -> dict | None:
+    """从 `bgm_dir/bgm.json` 清单里挑一条:先按 mood 过滤(条目 moods 含它才入围;
+    没配 moods 的条目视作百搭、mood=None 或桶空则全池),再按 slug 的 crc32 确定性
+    选(同 slug 永远同曲，换 slug 可能换——不用 Date/random，保证同一 job 重跑
+    选曲不变)。
 
     清单/目录缺失、清单为空、或选中曲目的文件本身不存在，一律 warn 后返回
     None，调用方回退 original 模式——never crash, never silent-fail。"""
@@ -148,6 +177,10 @@ def pick_bgm_track(bgm_dir: Path, slug: str, warn: Callable[[str], None]) -> dic
     if not tracks:
         warn(f"d7 BGM 清单为空({bgm_dir / BGM_MANIFEST})，回退用 no_vocals 背景床")
         return None
+    if mood:
+        bucket = [t for t in tracks if not t.get("moods") or mood in t["moods"]]
+        if bucket:
+            tracks = bucket
     idx = zlib.crc32(slug.encode("utf-8")) % len(tracks)
     entry = tracks[idx]
     path = bgm_dir / entry.get("file", "")
@@ -327,7 +360,10 @@ def run(ctx: Ctx) -> None:
     picked = None
     if bgm_mode == "replace":
         bgm_dir = Path(ctx.config.get("p7.bgm_dir", DEFAULT_BGM_DIR))
-        picked = pick_bgm_track(bgm_dir, ctx.slug, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
+        # 按影片内容选曲(用户定):片名/署名关键词→情绪桶;d9c 英文版用同样输入,中英同曲
+        src_meta = read_json(job, "source.json") if exists(job, "source.json") else {}
+        mood = infer_bgm_mood(str(src_meta.get("title", "")), str(src_meta.get("attribution", "")))
+        picked = pick_bgm_track(bgm_dir, ctx.slug, lambda m: ctx.warn(f"{ctx.slug}: {m}"), mood=mood)
     elif bgm_mode != "original":
         ctx.warn(f"{ctx.slug}: d7 未知 p7.bgm={bgm_mode!r}(应为 replace|original)，回退用 no_vocals 背景床")
     if picked is None:   # original 模式/回退时才需要 no_vocals 背景床,一并找回

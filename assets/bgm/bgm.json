@@ -1,9 +1,35 @@
 {
-  "license_note": "Kevin MacLeod (incompetech.com), Licensed under Creative Commons: By Attribution 4.0 — 使用须在简介署名(d8 自动追加)",
+  "license_note": "Kevin MacLeod (incompetech.com), Licensed under Creative Commons: By Attribution 4.0 — 使用须在简介署名(d8/d9c 自动追加)。moods 供 d7 按影片内容选曲(空缺=任意场景可用)",
   "tracks": [
     {"file": "Frozen_Star.mp3", "title": "Frozen Star", "artist": "Kevin MacLeod",
-     "license": "CC-BY-4.0", "attribution": "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+     "license": "CC-BY-4.0", "moods": ["space", "somber"],
+     "attribution": "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0"},
     {"file": "Floating_Cities.mp3", "title": "Floating Cities", "artist": "Kevin MacLeod",
-     "license": "CC-BY-4.0", "attribution": "背景音乐：Floating Cities - Kevin MacLeod (incompetech.com), CC BY 4.0"}
+     "license": "CC-BY-4.0", "moods": ["space", "neutral"],
+     "attribution": "背景音乐：Floating Cities - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Peaceful_Desolation.mp3", "title": "Peaceful Desolation", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["space", "somber"],
+     "attribution": "背景音乐：Peaceful Desolation - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Wholesome.mp3", "title": "Wholesome", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["nature", "uplifting"],
+     "attribution": "背景音乐：Wholesome - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Morning.mp3", "title": "Morning", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["nature", "neutral"],
+     "attribution": "背景音乐：Morning - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Water_Prelude.mp3", "title": "Water Prelude", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["ocean", "nature"],
+     "attribution": "背景音乐：Water Prelude - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Air_Prelude.mp3", "title": "Air Prelude", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["neutral", "uplifting"],
+     "attribution": "背景音乐：Air Prelude - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Inspired.mp3", "title": "Inspired", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["uplifting"],
+     "attribution": "背景音乐：Inspired - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Lightless_Dawn.mp3", "title": "Lightless Dawn", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["somber"],
+     "attribution": "背景音乐：Lightless Dawn - Kevin MacLeod (incompetech.com), CC BY 4.0"},
+    {"file": "Meditation_Impromptu_01.mp3", "title": "Meditation Impromptu 01", "artist": "Kevin MacLeod",
+     "license": "CC-BY-4.0", "moods": ["neutral", "nature"],
+     "attribution": "背景音乐：Meditation Impromptu 01 - Kevin MacLeod (incompetech.com), CC BY 4.0"}
   ]
 }
