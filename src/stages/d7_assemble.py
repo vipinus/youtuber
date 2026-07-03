@@ -304,8 +304,12 @@ def nvenc_env(config: Config, base_env: dict | None = None) -> dict:
 
 
 def run(ctx: Ctx) -> None:
+    from src.util.restore import restore_from_archive
+
     job = ctx.job
     source = job / SOURCE
+    # 重制场景:d10 归档后本地 source.mp4 被裁剪 → 自动从 NAS 找回(任务#50)
+    restore_from_archive(job, SOURCE, ctx.config, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
     subs = job / SUBS
     bg_gain = ctx.config.get("p7.bg_gain", 0.5)
     bgm_mode = ctx.config.get("p7.bgm", "replace")

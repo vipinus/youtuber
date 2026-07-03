@@ -138,8 +138,12 @@ def _build_clean_source(ctx) -> tuple[Path, dict] | None:
     from src.stages.d7_assemble import pick_bgm_track
     from src.util.ffprobe import duration_sec
 
+    from src.util.restore import restore_from_archive
+
     source = ctx.job / "source.mp4"
     vocals = ctx.job / "vocals.mp3"
+    _w = lambda m: ctx.warn(f"{ctx.slug}: {m}")  # noqa: E731
+    restore_from_archive(ctx.job, "vocals.mp3", ctx.config, _w)   # 任务#50:归档裁剪后自动找回
     if not vocals.exists():
         ctx.warn(f"{ctx.slug}: vocals.mp3 缺失(归档后没恢复?),英文版直传原声原片(可能吃版权认领)")
         return None
@@ -228,6 +232,9 @@ def run(ctx: Ctx) -> None:
         meta = _build_meta(source)
         uploader = _uploader_for(ctx.config)
         video = ctx.job / "source.mp4"                # 英文原声原片，非中文配音的 video.mp4
+        from src.util.restore import restore_from_archive
+        restore_from_archive(ctx.job, "source.mp4", ctx.config,
+                             lambda m: ctx.warn(f"{ctx.slug}: {m}"))  # 任务#50
         clean_built = None
         if ctx.config.get("youtube_en.replace_bgm", True):   # 默认换乐:原片内嵌商业配乐会吃 Content ID
             built = _build_clean_source(ctx)

@@ -77,6 +77,11 @@ def run(ctx: Ctx) -> None:
     meta = read_json(ctx.job, INPUT)
     source = read_json(ctx.job, SOURCE_META) if (ctx.job / SOURCE_META).is_file() else {}
 
+    # 重投场景:d10 归档后本地 video.mp4 被裁剪 → 自动从 NAS 找回(任务#50)
+    from src.util.restore import restore_from_archive
+    restore_from_archive(ctx.job, "video.mp4", ctx.config,
+                         lambda m: ctx.warn(f"{ctx.slug}: {m}"))
+
     biliup_bin = Path(ctx.config.get("bilibili.biliup_bin", "~/bili-venv/bin/biliup")).expanduser()
     tid = ctx.config.get("bilibili.tid", 201)
     only_self = ctx.config.get("bilibili.only_self", True)
