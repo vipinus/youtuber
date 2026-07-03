@@ -670,3 +670,28 @@ def test_youtube_gov_skips_published_and_falls_through_on_dl_failure(monkeypatch
     from src.util.jobs import read_json
     src = read_json(ctx.job, d1_source.META_OUTPUT)
     assert src["identifier"] == "yt:good"           # done1 去重跳过,nohd 下载失败跳过
+
+
+def test_youtube_gov_excludes_live_replays(monkeypatch, tmp_path):
+    """用户定:直播回放不收——live_status 硬判 + 标题 live/replay 词兜底。"""
+    from src.stages import d1_source
+    entries = [
+        {"id": "wl", "title": "Mars Landing Documentary", "duration": 900,
+         "view_count": 9_000_000, "live_status": "was_live"},
+        {"id": "tl", "title": "LIVE: Artemis Launch Coverage Film", "duration": 900,
+         "view_count": 8_000_000},
+        {"id": "ok", "title": "Artemis Mission Documentary", "duration": 900,
+         "view_count": 100, "live_status": "not_live"},
+    ]
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    monkeypatch.setattr(d1_source, "_yt_view_count", lambda b, v: 0)
+    monkeypatch.setattr(d1_source, "_yt_download", lambda b, vid, dest, mh, mb: dest.write_bytes(b"MP4"))
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NASA"]})
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    src = read_json(ctx.job, d1_source.META_OUTPUT)
+    assert src["identifier"] == "yt:ok"    # was_live 与标题 LIVE 的高流量片都被拒

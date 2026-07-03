@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from src.context import Ctx
@@ -280,6 +281,12 @@ def _run_youtube_gov(ctx: Ctx) -> None:
         if not vid or f"yt:{vid}" in skip_ids:
             continue
         title = str(e.get("title") or vid)
+        # 用户定(2026-07-03):直播回放一律不收——live_status 硬判 + 标题词兜底
+        # (直播档是多小时松散解说,不是成片纪录片;NASA 发射直播还常年霸播放量榜)
+        if e.get("live_status") in ("is_live", "was_live", "is_upcoming", "post_live"):
+            continue
+        if re.search(r"\blive\b|\blivestream\b|\breplay\b", title, re.IGNORECASE):
+            continue
         if _is_blocked(title, "", "") or not _looks_narrated(title, ""):
             continue
         dur = float(e.get("duration") or 0)
