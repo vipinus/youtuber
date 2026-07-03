@@ -34,6 +34,7 @@ def restore_from_archive(job: Path, filename: str, config,
     if not src.exists():
         return False
     try:
+        target.parent.mkdir(parents=True, exist_ok=True)   # narration/nXXX.mp3 这类子目录文件
         tmp = target.with_name(target.name + ".part")
         shutil.copyfile(src, tmp)
         if tmp.stat().st_size != src.stat().st_size:   # NFS 半截读的保险

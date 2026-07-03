@@ -315,6 +315,11 @@ def run(ctx: Ctx) -> None:
     bgm_mode = ctx.config.get("p7.bgm", "replace")
 
     segments = read_json(job, NARRATION).get("segments", []) if exists(job, NARRATION) else []
+    # 重制场景续(任务#50):配音段文件也会被 d10 裁剪——挨个找回,汇总告警一条(不刷屏)
+    _restored: list[str] = []
+    for seg in segments:
+        if seg.get("file"):
+            restore_from_archive(job, seg["file"], ctx.config, _restored.append)
     narration_path: Path | None = None
 
     bg = job / BACKGROUND
@@ -325,6 +330,10 @@ def run(ctx: Ctx) -> None:
         picked = pick_bgm_track(bgm_dir, ctx.slug, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
     elif bgm_mode != "original":
         ctx.warn(f"{ctx.slug}: d7 未知 p7.bgm={bgm_mode!r}(应为 replace|original)，回退用 no_vocals 背景床")
+    if picked is None:   # original 模式/回退时才需要 no_vocals 背景床,一并找回
+        restore_from_archive(job, BACKGROUND, ctx.config, _restored.append)
+    if _restored:
+        ctx.warn(f"{ctx.slug}: 已从NAS归档恢复 {len(_restored)} 个媒体文件(d10 裁剪后重跑)")
 
     # P7 T18：水印开关+文件存在性只影响"要不要 ffprobe 源片时长"这个判断本身，
     # 不在这里 warn(避免跟 build_assemble_cmd 里同一份检查重复告警一次)——真正

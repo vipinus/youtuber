@@ -51,3 +51,13 @@ def test_archive_dir_unset_returns_false(tmp_path):
     cfg = Config({"archive": {"dir": ""}})
 
     assert restore_from_archive(job, "video.mp4", cfg, warns.append) is False
+
+
+def test_restore_creates_missing_subdirectory(tmp_path):
+    """narration/nXXX.mp3 这类子目录文件:本地目录不在也能恢复(d7 重制场景)。"""
+    job, archive, cfg, warns = _setup(tmp_path)
+    (archive / "narration").mkdir()
+    (archive / "narration" / "n000.mp3").write_bytes(b"SEG")
+
+    assert restore_from_archive(job, "narration/n000.mp3", cfg, warns.append) is True
+    assert (job / "narration" / "n000.mp3").read_bytes() == b"SEG"
