@@ -55,7 +55,7 @@ def strip_display_punct(text: str) -> str:
     """屏显字幕去标点(用户定)：逗号→空格、句号删掉。只影响烧进画面的文本；
     断句(_split_cues)与配音文本仍用带标点原文。半角句点仅删句尾(保护 3.5 这类小数)。"""
     import re
-    text = text.replace("，", " ").replace(",", " ")
+    text = text.replace("，", " ").replace(",", " ").replace("、", " ")  # 顿号=并列逗号,同规则(nature-doc-01真跑发现)
     text = text.replace("。", "")
     text = re.sub(r"\.(?=\s|$)", "", text)
     return re.sub(r"\s+", " ", text).strip()

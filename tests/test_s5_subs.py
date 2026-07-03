@@ -135,3 +135,8 @@ def test_strip_display_punct_rules():
     assert strip_display_punct("然而，军方很快改口。") == "然而 军方很快改口"
     assert strip_display_punct("速度是 3.5 倍。") == "速度是 3.5 倍"
     assert strip_display_punct("这是飞碟，还是气球？") == "这是飞碟 还是气球？"
+
+def test_strip_display_punct_converts_enumeration_comma_to_space():
+    """顿号=并列逗号,同「逗号→空格」规则(nature-doc-01 真跑漏网)。"""
+    from src.stages.s5_subs import strip_display_punct
+    assert strip_display_punct("靠近人口中心、且能开展冬季运动的公园") == "靠近人口中心 且能开展冬季运动的公园"
