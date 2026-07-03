@@ -91,10 +91,13 @@ def run(ctx: Ctx) -> None:
 
     title = _clamp_title(meta.get("title", ""))
     tags = _clamp_tags(meta.get("tags", []))
-    # 优先 /details/ 页面(人可读,利于B站审核核验来源);无 identifier 才退直链
+    # 优先 /details/ 页面(人可读,利于B站审核核验来源);yt: 前缀(youtube_gov 政府
+    # 频道源)没有 archive 详情页,直接用 watch URL;都没有才退默认
     identifier = source.get("identifier")
-    source_url = (f"https://archive.org/details/{identifier}" if identifier
-                  else source.get("source_url") or _DEFAULT_SOURCE_URL)
+    if identifier and not str(identifier).startswith("yt:"):
+        source_url = f"https://archive.org/details/{identifier}"
+    else:
+        source_url = source.get("source_url") or _DEFAULT_SOURCE_URL
 
     # 绝对路径:biliup 以 cookie_dir 为 cwd 跑,相对路径会解析错位(真跑踩坑:封面 No such file)
     cmd = [

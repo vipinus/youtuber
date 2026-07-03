@@ -367,3 +367,12 @@ def test_replace_bgm_builds_clean_source_and_credits(tmp_path, monkeypatch):
     assert out["status"] == "published"
     assert out["replaced_bgm"] is True
     assert not (ctx.job / "source_clean.mp4").exists()          # 传完即清
+
+
+def test_build_meta_uses_watch_url_for_youtube_gov_source():
+    """yt: 前缀(政府频道源)没有 archive 详情页,简介里用 watch URL。"""
+    meta = _build_meta({"identifier": "yt:abc123", "title": "Wolves",
+                        "attribution": "Source: NPS.",
+                        "source_url": "https://www.youtube.com/watch?v=abc123"})
+    assert "https://www.youtube.com/watch?v=abc123" in meta["description"]
+    assert "archive.org" not in meta["description"]

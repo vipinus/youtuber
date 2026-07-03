@@ -572,3 +572,99 @@ def test_non_narrated_blocks_home_movie_and_stock_scans():
     assert not _looks_narrated("Adirondack Holiday: Stock Shots, Part 7", "")
     assert not _looks_narrated("American Choice Outtakes, Reel 6", "")
     assert _looks_narrated("Yellowstone National Park", "")   # 正经片名不受影响
+
+
+# ---------------------------------------------------------------------------
+# p7.include_identifiers 定点白名单 + p7.source=youtube_gov 政府频道选片
+# ---------------------------------------------------------------------------
+
+def _gov_ctx(tmp_path, extra_p7):
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    p7 = {"min_sec": 300, "max_sec": 28800, "rows": 10}
+    p7.update(extra_p7)
+    return Ctx(slug="gov", config=Config({"p7": p7}), root=tmp_path / "jobs", llm=FakeLLM())
+
+
+def test_include_identifiers_considered_first_but_still_gated(monkeypatch, tmp_path):
+    from src.stages import d1_source
+    order = []
+    metas = {
+        "whitelisted-doc": {"metadata": {"title": "Park Wildlife Documentary",
+                                         "licenseurl": "http://creativecommons.org/publicdomain/mark/1.0/"},
+                            "files": [{"name": "a.mp4", "length": "600", "size": "5000000", "height": "1080"}]},
+    }
+    def fake_meta(ident):
+        order.append(ident)
+        return metas[ident]
+    monkeypatch.setattr(d1_source, "_search", lambda *a, **k: [{"identifier": "popular-but-second"}])
+    monkeypatch.setattr(d1_source, "_fetch_metadata", fake_meta)
+    monkeypatch.setattr(d1_source, "_download", lambda url, dest: dest.write_bytes(b"MP4"))
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"include_identifiers": ["whitelisted-doc"]})
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    src = read_json(ctx.job, d1_source.META_OUTPUT)
+    assert order[0] == "whitelisted-doc"            # 白名单排最前
+    assert src["identifier"] == "whitelisted-doc"   # 过全门禁后选中,没轮到搜索结果
+
+
+def test_youtube_gov_picks_highest_view_count_passing_gates(monkeypatch, tmp_path):
+    """用户定:全频道汇总按播放量降序;黑名单/无解说/时长/HD地板照常拦。"""
+    from src.stages import d1_source
+    entries = [
+        {"id": "broll", "title": "Yellowstone B-roll", "duration": 600, "view_count": 9_000_000},
+        {"id": "short", "title": "Bear Safety Wildlife Film", "duration": 60, "view_count": 8_000_000},
+        {"id": "top",   "title": "Wolves of Yellowstone Documentary", "duration": 900,
+         "view_count": 5_000_000, "channel": "National Park Service"},
+        {"id": "meh",   "title": "Salmon Run Wildlife Film", "duration": 900, "view_count": 1000},
+    ]
+    downloaded = []
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    def fake_dl(b, vid, dest, mh, mb):
+        downloaded.append(vid)
+        dest.write_bytes(b"MP4")
+    monkeypatch.setattr(d1_source, "_yt_download", fake_dl)
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NationalParkService"]})
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    src = read_json(ctx.job, d1_source.META_OUTPUT)
+    assert downloaded == ["top"]                    # broll(无解说)/short(时长)被拦,选流量最高的合格片
+    assert src["identifier"] == "yt:top"
+    assert src["license"] == "public-domain"
+    assert src["view_count"] == 5_000_000
+    assert src["source_url"] == "https://www.youtube.com/watch?v=top"
+    assert "National Park Service" in src["attribution"]
+
+
+def test_youtube_gov_skips_published_and_falls_through_on_dl_failure(monkeypatch, tmp_path):
+    from src.stages import d1_source
+    from src.util.registry import append_published
+    entries = [
+        {"id": "done1", "title": "Everglades Wildlife Documentary", "duration": 900, "view_count": 99},
+        {"id": "nohd",  "title": "Forest Refuge Documentary", "duration": 900, "view_count": 50},
+        {"id": "good",  "title": "Salmon River Documentary", "duration": 900, "view_count": 10},
+    ]
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    def fake_dl(b, vid, dest, mh, mb):
+        if vid == "nohd":
+            raise RuntimeError("Requested format is not available")
+        dest.write_bytes(b"MP4")
+    monkeypatch.setattr(d1_source, "_yt_download", fake_dl)
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 720)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@USFWS"]})
+    append_published(ctx.root, {"identifier": "yt:done1"})   # 已发布过
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    src = read_json(ctx.job, d1_source.META_OUTPUT)
+    assert src["identifier"] == "yt:good"           # done1 去重跳过,nohd 下载失败跳过

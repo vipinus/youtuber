@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from src.context import Ctx
@@ -185,8 +186,126 @@ def _looks_narrated(*texts: str) -> bool:
     return not any(k in hay for k in _NON_NARRATED)
 
 
+def _yt_videos_url(channel: str) -> str:
+    """@handle / 完整URL 都归一成频道 Videos 标签页 URL。"""
+    if channel.startswith("http"):
+        return channel if channel.rstrip("/").endswith("/videos") else channel.rstrip("/") + "/videos"
+    return f"https://www.youtube.com/{channel}/videos"
+
+
+def _yt_list_channel(ytdlp: str, channel: str, limit: int) -> list[dict]:
+    """yt-dlp flat-playlist 列频道视频:[{id,title,duration,channel},...]。真网络,测试必打桩。"""
+    import subprocess
+    out = subprocess.run(
+        [ytdlp, "--flat-playlist", "-J", "--playlist-end", str(limit), _yt_videos_url(channel)],
+        capture_output=True, text=True, timeout=600, check=True)
+    data = json.loads(out.stdout)
+    return [e for e in (data.get("entries") or []) if e]
+
+
+def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_bytes: int) -> None:
+    """按高度门槛下载合并成 mp4;无满足门槛的格式时 yt-dlp 非零退出,调用方跳过该片。"""
+    import subprocess
+    fmt = (f"bestvideo[height>={min_height}][ext=mp4]+bestaudio[ext=m4a]"
+           f"/best[height>={min_height}][ext=mp4]")
+    subprocess.run(
+        [ytdlp, "-f", fmt, "--max-filesize", str(max_bytes), "--merge-output-format", "mp4",
+         "-o", str(dest), "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+        capture_output=True, text=True, timeout=7200, check=True)
+
+
+def _probe_height(path: Path) -> int:
+    """ffprobe 实测视频高度(下载后纵深校验,不信任元数据)。"""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=height", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=60, check=True)
+        return int(out.stdout.strip().splitlines()[0])
+    except Exception:
+        return 0
+
+
+def _run_youtube_gov(ctx: Ctx) -> None:
+    """P7 题材2供给:官方**美国联邦政府**频道白名单选片(NPS/USFWS/NOAA...)。
+
+    合法性前提(护栏#2 的 youtube 形态):联邦政府雇员职务作品法定公有领域
+    (17 USC §105),**不论 YouTube 页面标什么许可**。因此本分支的许可门 =
+    `p7.yt_channels` 白名单本身——只能放官方联邦机构频道;州立机构/承包商/
+    个人频道不适用该法条,加进来就是破门,review 时必须拦。
+
+    其余门禁与 archive 分支完全同款:登记表去重(yt:<id>)、标题黑名单、
+    无解说关键词、时长窗口、HD 地板(下载前格式过滤+下载后 ffprobe 实测)、
+    音轨探测。"""
+    cfg = ctx.config
+    ytdlp = str(Path(str(cfg.get("p7.ytdlp_bin", "yt-dlp"))).expanduser())
+    channels = list(cfg.get("p7.yt_channels", []))
+    if not channels:
+        raise RuntimeError("d1_source: p7.source=youtube_gov 但 p7.yt_channels 为空")
+    min_sec = cfg.get("p7.min_sec", DEFAULT_MIN_SEC)
+    max_sec = cfg.get("p7.max_sec", DEFAULT_MAX_SEC)
+    max_bytes = cfg.get("p7.max_bytes", DEFAULT_MAX_BYTES)
+    limit = int(cfg.get("p7.rows", DEFAULT_ROWS))
+    floor = max(int(cfg.get("p7.min_height", 700)), 700)   # 用户硬约束:HD 地板同 archive 分支
+
+    skip_ids = published_identifiers(ctx.root) | in_flight_identifiers(ctx.root, ctx.slug)
+
+    # 用户定(2026-07-03):全部白名单频道汇总后按播放量降序选——流量最高的先做
+    pool: list[tuple[dict, str]] = []
+    for channel in channels:
+        try:
+            pool += [(e, channel) for e in _yt_list_channel(ytdlp, channel, limit)]
+        except Exception as e:
+            ctx.warn(f"d1_source: 频道 {channel} 列表失败({type(e).__name__})，跳过")
+    pool.sort(key=lambda t: t[0].get("view_count") or 0, reverse=True)
+
+    for e, channel in pool:
+        vid = e.get("id")
+        if not vid:
+            continue
+        identifier = f"yt:{vid}"
+        if identifier in skip_ids:
+            ctx.warn(f"d1_source: {identifier} 已发布/在途，跳过")
+            continue
+        title = str(e.get("title") or vid)
+        if _is_blocked(title, "", "") or not _looks_narrated(title, ""):
+            continue
+        dur = float(e.get("duration") or 0)
+        if not (min_sec <= dur <= max_sec):
+            continue
+        try:
+            _yt_download(ytdlp, vid, ctx.job / OUTPUT, floor, max_bytes)
+        except Exception as ex:
+            ctx.warn(f"d1_source: {identifier} 下载失败({type(ex).__name__}，可能无≥{floor}p格式)，跳过")
+            continue
+        height = _probe_height(ctx.job / OUTPUT)
+        if height < floor or not _has_audio(ctx.job / OUTPUT):
+            ctx.warn(f"d1_source: {identifier} 实测不达标(height={height})或无音轨，弃用")
+            (ctx.job / OUTPUT).unlink(missing_ok=True)
+            continue
+        label = str(e.get("channel") or e.get("uploader") or channel)
+        write_json(ctx.job, META_OUTPUT, {
+            "identifier": identifier,
+            "title": title,
+            "license": "public-domain",   # 联邦政府作品(17 USC §105);白名单即许可门
+            "attribution": f"Source: {label} (U.S. government work, public domain).",
+            "duration": dur,
+            "view_count": e.get("view_count"),
+            "source_url": f"https://www.youtube.com/watch?v={vid}",
+            "resolution": f"{height}p",
+        })
+        return
+    raise RuntimeError(
+        f"d1_source: youtube_gov 频道白名单里没有符合条件的片(channels={channels}, "
+        f"{min_sec}-{max_sec}s, >={floor}p) — 加频道/放宽时长后重试")
+
+
 def run(ctx: Ctx) -> None:
     cfg = ctx.config
+    ctx.job.mkdir(parents=True, exist_ok=True)   # 下载落地目录(youtube_gov 分支没有 write_json 先行建目录)
+    if cfg.get("p7.source", "archive") == "youtube_gov":
+        return _run_youtube_gov(ctx)
     query = cfg.get("p7.query", DEFAULT_QUERY)
     min_sec = cfg.get("p7.min_sec", DEFAULT_MIN_SEC)
     max_sec = cfg.get("p7.max_sec", DEFAULT_MAX_SEC)
@@ -195,6 +314,11 @@ def run(ctx: Ctx) -> None:
     rows = int(cfg.get("p7.rows", DEFAULT_ROWS))   # HD门槛+登记去重会滤掉大量热门,池子要够深
 
     docs = _search(query, collections, rows=rows)
+    # 定点白名单(p7.include_identifiers):人工核验过的条目排最前面优先考虑——
+    # 仍要走下面全部门禁(许可二次核验/黑名单/无解说/HD地板/音轨),白名单≠免检
+    include = [{"identifier": i} for i in cfg.get("p7.include_identifiers", []) or []]
+    docs = include + [d for d in docs if d.get("identifier") not in
+                      {i["identifier"] for i in include}]
 
     # P7 T16：登记表去重——已发布过的、以及同批其它 job 已下载但还没发布完
     # 的（source.json 存在），一律跳过，不然同一条 query 每次都会重挑到

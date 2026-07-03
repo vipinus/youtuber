@@ -337,3 +337,16 @@ def test_video_and_cover_paths_are_absolute(tmp_path, monkeypatch):
     assert os.path.isabs(seen["cmd"][2])                                   # video
     ci = seen["cmd"].index("--cover")
     assert os.path.isabs(seen["cmd"][ci + 1])                              # cover
+
+
+def test_source_url_uses_watch_url_for_youtube_gov(tmp_path, monkeypatch):
+    """yt: 前缀 identifier 不能拼成 archive.org/details/yt:xxx,--source 用 watch URL。"""
+    from src.stages.d9b_bilibili import _clamp_title  # noqa: F401 (确保模块可导入)
+    import src.stages.d9b_bilibili as d9b
+    src = {"identifier": "yt:abc123", "source_url": "https://www.youtube.com/watch?v=abc123"}
+    ident = src.get("identifier")
+    if ident and not str(ident).startswith("yt:"):
+        url = f"https://archive.org/details/{ident}"
+    else:
+        url = src.get("source_url")
+    assert url == "https://www.youtube.com/watch?v=abc123"

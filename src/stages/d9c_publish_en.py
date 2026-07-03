@@ -200,7 +200,10 @@ def _build_meta(source: dict) -> dict:
     title = (source.get("title") or "")[:_TITLE_MAX_CHARS]
     identifier = source.get("identifier")
     attribution = source.get("attribution", "")
-    archive_url = f"https://archive.org/details/{identifier}" if identifier else ""
+    if identifier and not str(identifier).startswith("yt:"):   # yt: 源(youtube_gov)没有 archive 详情页
+        archive_url = f"https://archive.org/details/{identifier}"
+    else:
+        archive_url = source.get("source_url") or ""
     description = (
         f"{attribution}\n\n"
         f"Public domain source: {archive_url}\n\n"
