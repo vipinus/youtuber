@@ -124,6 +124,52 @@ def make_en_thumbnail(dest: Path, title: str, bg: Path, watermark: Path,
     img.convert("RGB").save(dest, "JPEG", quality=88, optimize=True)
 
 
+def _build_clean_source(ctx) -> tuple[Path, dict] | None:
+    """英文版「换乐不换声」:demucs 分离出的 vocals.mp3(英文旁白原声) + CC-BY BGM
+    重混,视频流 `-c:v copy` 不重编码。为什么:source.mp4 原声里内嵌片方外购的
+    商业配乐,直传第二频道会跟中文版当年一样吃 Content ID 认领(中文版在 d7 已换
+    BGM 所以干净);英文版没有配音要替换,但配乐同样得换。
+
+    选曲用 pick_bgm_track(slug crc32 确定性)——跟 d7 中文版选同一首,双语版
+    听感一致。vocals 缺失/选曲失败/ffmpeg 失败 → warn + None,回退直传原片
+    (老行为),绝不挡上传。成功返回 (clean_path, 曲目条目) 供上传+简介署名。"""
+    import subprocess
+
+    from src.stages.d7_assemble import pick_bgm_track
+    from src.util.ffprobe import duration_sec
+
+    source = ctx.job / "source.mp4"
+    vocals = ctx.job / "vocals.mp3"
+    if not vocals.exists():
+        ctx.warn(f"{ctx.slug}: vocals.mp3 缺失(归档后没恢复?),英文版直传原声原片(可能吃版权认领)")
+        return None
+    entry = pick_bgm_track(
+        Path(ctx.config.get("p7.bgm_dir", "assets/bgm")), ctx.slug, ctx.warn)
+    if entry is None:
+        return None
+    try:
+        dur = duration_sec(source)
+        out = ctx.job / "source_clean.mp4"
+        audio_fc = (
+            f"[1:a]volume={ctx.config.get('p7.bg_gain', 0.5)}[bg];"
+            "[bg][2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
+            "[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
+        )
+        cmd = ["ffmpeg", "-y", "-i", str(source),
+               "-stream_loop", "-1", "-t", f"{dur:.3f}", "-i", str(entry["path"]),
+               "-i", str(vocals),
+               "-filter_complex", audio_fc,
+               "-map", "0:v", "-map", "[aout]",
+               "-c:v", "copy", "-c:a", "aac", "-shortest", str(out)]
+        subprocess.run(cmd, capture_output=True, timeout=3600, check=True)
+        if not out.exists() or out.stat().st_size == 0:
+            raise RuntimeError("输出为空")
+        return out, entry
+    except Exception as e:  # noqa: BLE001 — 重混失败退回原片,不挡上传
+        ctx.warn(f"{ctx.slug}: 英文版换 BGM 失败({type(e).__name__}),直传原声原片")
+        return None
+
+
 def _extract_frame_bg(video: Path, dest: Path) -> bool:
     """thumb_bg.png 缺失(通常被 d10 归档裁剪)时从源片抽一帧当封面背景。
     取片长 22% 处——躲开片头字幕卡/logo,又不至于深入正片撞上采访人脸。
@@ -182,6 +228,16 @@ def run(ctx: Ctx) -> None:
         meta = _build_meta(source)
         uploader = _uploader_for(ctx.config)
         video = ctx.job / "source.mp4"                # 英文原声原片，非中文配音的 video.mp4
+        clean_built = None
+        if ctx.config.get("youtube_en.replace_bgm", True):   # 默认换乐:原片内嵌商业配乐会吃 Content ID
+            built = _build_clean_source(ctx)
+            if built is not None:
+                clean_built, bgm = built
+                video = clean_built
+                attribution = (bgm.get("entry") or {}).get("attribution") or ""
+                if attribution:
+                    meta["description"] += (
+                        "\n\nOriginal soundtrack replaced with royalty-free music:\n" + attribution)
         # 英文封面:AI 背景 + 金属英文标题 + 英文水印(生成失败退回裸背景图,再不行跳过封面)
         thumb = ctx.job / "thumb_en.jpg"
         bg = ctx.job / "thumb_bg.png"
@@ -204,6 +260,9 @@ def run(ctx: Ctx) -> None:
 
     result["status"] = "published"
     result["visibility"] = visibility
+    if clean_built is not None:
+        result["replaced_bgm"] = True
+        clean_built.unlink(missing_ok=True)   # 可再生的临时产物(NAS 有 source+vocals),传完即清
 
     playlist_title = ctx.config.get("youtube_en.playlist", "")
     if playlist_title:

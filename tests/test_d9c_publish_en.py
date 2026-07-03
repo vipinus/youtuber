@@ -106,6 +106,7 @@ def test_happy_path_uploads_source_mp4_with_unlisted_visibility(tmp_path, monkey
         "youtube_en": {
             "enabled": True, "provider": "fake", "visibility": "unlisted",
             "playlist": "Space / NASA Archive",
+            "replace_bgm": False,   # 本测锁定「直传原片」路径;换乐路径见 replace_bgm 专测
         },
     }))
 
@@ -307,3 +308,62 @@ def test_extract_frame_bg_from_real_video(tmp_path):
     bg = tmp_path / "thumb_bg.png"
     assert _extract_frame_bg(video, bg) is True
     assert Image.open(bg).size == (1280, 720)
+
+# ---------------------------------------------------------------------------
+# replace_bgm（默认开）：英文版换乐不换声——原片内嵌商业配乐会吃 Content ID
+# ---------------------------------------------------------------------------
+
+def test_replace_bgm_default_falls_back_when_vocals_missing(tmp_path, monkeypatch):
+    """vocals.mp3 缺失(归档后未恢复)→ warn + 直传 source.mp4,上传照常成功。"""
+    _, calls = _capture_fake_uploader(monkeypatch)
+    ctx = _ctx(tmp_path, Config({"youtube_en": {"enabled": True, "provider": "fake"}}))
+
+    run(ctx)
+
+    assert calls["video"] == ctx.job / "source.mp4"
+    out = read_json(ctx.job, OUTPUT)
+    assert out["status"] == "published"
+    assert "replaced_bgm" not in out
+    assert any("vocals.mp3" in w for w in ctx.warnings)
+
+
+def _make_bgm_dir(root: Path) -> Path:
+    """真曲目池:1 条 2s 正弦 mp3 + bgm.json 清单(带 CC-BY 署名)。"""
+    import subprocess
+    bgm_dir = root / "bgm"
+    bgm_dir.mkdir(parents=True)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=220:duration=2",
+         str(bgm_dir / "t.mp3")], capture_output=True, check=True)
+    write_json(bgm_dir, "bgm.json", {"tracks": [{
+        "file": "t.mp3", "attribution": '"Test Track" Kevin MacLeod, CC BY 4.0'}]})
+    return bgm_dir
+
+
+def test_replace_bgm_builds_clean_source_and_credits(tmp_path, monkeypatch):
+    """真 ffmpeg 全链:重混出 source_clean.mp4 上传(视频流 copy),简介带 CC-BY
+    署名,marker 记 replaced_bgm,临时文件传完即清。"""
+    import subprocess
+    _, calls = _capture_fake_uploader(monkeypatch)
+    bgm_dir = _make_bgm_dir(tmp_path)
+    ctx = _ctx(tmp_path, Config({
+        "youtube_en": {"enabled": True, "provider": "fake"},
+        "p7": {"bgm_dir": str(bgm_dir)},
+    }))
+    subprocess.run(  # 覆盖 _ctx 的假 source.mp4:3s 真视频(带原声,模拟内嵌配乐)
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=duration=3:size=320x240:rate=10",
+         "-f", "lavfi", "-i", "sine=frequency=880:duration=3",
+         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+         str(ctx.job / "source.mp4")], capture_output=True, check=True)
+    subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+         str(ctx.job / "vocals.mp3")], capture_output=True, check=True)
+
+    run(ctx)
+
+    assert calls["video"] == ctx.job / "source_clean.mp4"
+    assert "Kevin MacLeod" in calls["meta"]["description"]      # CC-BY 署名进简介
+    out = read_json(ctx.job, OUTPUT)
+    assert out["status"] == "published"
+    assert out["replaced_bgm"] is True
+    assert not (ctx.job / "source_clean.mp4").exists()          # 传完即清
