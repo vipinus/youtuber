@@ -563,3 +563,12 @@ def test_run_enforces_hd_floor_even_if_config_lower(monkeypatch, tmp_path):
     except Exception:
         pass   # 池子空会 raise,不影响本测目的
     assert captured["min_height"] == 700
+
+
+def test_non_narrated_blocks_home_movie_and_stock_scans():
+    """2K胶扫无声素材(Home Movie/Stock Shots/Outtakes)不算解说纪录片(自然类HD普查发现)。"""
+    from src.stages.d1_source import _looks_narrated
+    assert not _looks_narrated("Home Movie: 011738", "")
+    assert not _looks_narrated("Adirondack Holiday: Stock Shots, Part 7", "")
+    assert not _looks_narrated("American Choice Outtakes, Reel 6", "")
+    assert _looks_narrated("Yellowstone National Park", "")   # 正经片名不受影响

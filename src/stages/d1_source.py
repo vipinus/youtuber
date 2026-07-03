@@ -160,6 +160,8 @@ _NON_NARRATED = (
     "ultra-high", "uhd", "4k", "8k", "flyover", "aerials", "raw footage",
     "resource reel", "stock footage", "highlight reel",   # NASA 给创作者的素材卷，故意无旁白
     "onboard film", "onboard camera", "16mm",             # 机载胶片(真跑踩坑:阿波罗11机载胶片连音轨都没有)
+    "home movie", "home movies", "stock shots",           # 2K胶扫无声家庭影像/素材卷(自然类HD普查:
+    "outtakes", "screen tests", "camera test",            # Prelinger 高清池几乎全是这类,画质够但没解说)
 )
 
 
