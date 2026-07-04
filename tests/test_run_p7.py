@@ -287,7 +287,7 @@ def test_p7_doc_pipeline_e2e_all_offline_produces_video_and_publishes(tmp_path, 
     zh_script = read_json(job, "zh_script.json")
     assert zh_script["segments"][0]["zh"] == "这是一个假的转录片段。"
     assert zh_script["segments"][1]["zh"] == "它纯粹是为了离线测试而存在。"
-    assert len(llm.calls) == 3                    # d3 一批 + 超预算定向返工一轮 + d8_meta 一次
+    assert len(llm.calls) == 2                    # d3 一批(上限内不触发返工) + d8_meta 一次
 
     # 配音真的合成了音频文件
     narration = read_json(job, "narration.json")

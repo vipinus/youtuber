@@ -172,15 +172,16 @@ def test_subs_follow_dub_windows_when_narration_exists(tmp_path, monkeypatch):
         {"id": 0, "start": 0.0, "tts_dur": 4.0, "zh": "第一段旁白内容", "file": "narration/n000.wav"},
         {"id": 1, "start": 20.0, "tts_dur": 8.0, "zh": "第二段旁白内容", "file": "narration/n001.wav"},
     ]})
-    monkeypatch.setattr(d5_subs, "read_json", d5_subs.read_json)  # no-op,占位说明真读文件
+    import src.util.ffprobe as ffprobe_mod
+    monkeypatch.setattr(ffprobe_mod, "duration_sec", lambda p: 40.0)  # 固定片长,免探测
 
     d5_subs.run(ctx)
 
     ass = (ctx.job / "subs.ass").read_text(encoding="utf-8")
     dialogue = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
     assert len(dialogue) == 2
-    # 段0:字幕 0:00:00.00 -> 0:00:04.00(配音4s),不是原片的10s
-    assert "0:00:04.00" in dialogue[0]
+    # 段0:中文4s/原声10s→降速拉满(下限0.8)→5s;字幕跟配音 0-5s,不是原片的10s
+    assert "0:00:05.00" in dialogue[0]
     assert "0:00:10.00" not in dialogue[0]
-    # 段1:20s 起,8s 中文 -> 28s 收
-    assert "0:00:20.00" in dialogue[1] and "0:00:28.00" in dialogue[1]
+    # 段1:20s 起,8s 中文/10s 原声→0.8降速→10s,字幕 20-30s
+    assert "0:00:20.00" in dialogue[1] and "0:00:30.00" in dialogue[1]

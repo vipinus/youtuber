@@ -1225,10 +1225,9 @@ def test_tempo_factors_compress_overlapping_clips():
         {"id": 2, "start": 10.0, "tts_dur": 4.0, "gender": "female"}, # 女声段落:装得下→1.0
     ]
     f = tempo_factors(segs, video_dur=15.0)
-    # 段落窗口=10-0.15=9.85, 语音10.42+呼吸0.35 → 需1.097(<封顶1.25:重排吃掉
-    # 空白后不再顶格——正是"利用空白降低语速"的效果)
+    # 段落窗口=10-0.15=9.85, 语音10.42+呼吸0.35 → 需1.097(装不下0.8才按需加快)
     assert f[0] == f[1] and 1.05 < f[0] < 1.15      # 段落内一致且远低于封顶
-    assert f[2] == 1.0                              # 另一角色不受影响
+    assert 0.8 <= f[2] < 0.85                       # 另一段落:回落目标语速0.8
     assert MAX_TEMPO == 1.25
 
 
@@ -1239,7 +1238,7 @@ def test_narration_filter_includes_atempo_only_when_needed():
     segs[0]["gender"], segs[1]["gender"] = "male", "female"   # 两个角色两块
     fc = build_narration_filter(segs, video_dur=10.0)
     assert "[0:a]atempo=1.2500,atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 男块封顶仍超→截尾
-    assert "[1:a]adelay=3000|3000[d1]" in fc            # 女块装得下:原速无处理
+    assert "[1:a]atempo=0.8000,adelay=3000|3000[d1]" in fc  # 女块装得下:目标语速0.8
 
 
 def test_capped_overlong_clip_is_trimmed_with_fade():
@@ -1249,8 +1248,8 @@ def test_capped_overlong_clip_is_trimmed_with_fade():
             {"id": 1, "start": 3.0, "tts_dur": 1.0, "gender": "female"}]  # 另一角色块,不被牵连
     fc = build_narration_filter(segs, video_dur=10.0)
     assert "atrim=0:2.850" in fc and "afade=t=out" in fc
-    # 装得下的段不截
-    assert "[1:a]adelay=3000|3000[d1]" in fc
+    # 另一角色块装得下:目标语速0.8,不截
+    assert "[1:a]atempo=0.8000,adelay=3000|3000[d1]" in fc
 
 
 def test_fitting_clip_not_trimmed():
@@ -1259,8 +1258,8 @@ def test_fitting_clip_not_trimmed():
     segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3, "gender": "male"},    # 需1.158<1.25→块速1.1579
             {"id": 1, "start": 3.0, "tts_dur": 1.0, "gender": "female"}]  # 女块装得下
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "[0:a]atempo=1.1579,adelay=0|0[d0]" in fc     # 变速后装下:无截尾
-    assert "[1:a]adelay=3000|3000[d1]" in fc
+    assert "[0:a]atempo=1.1579,adelay=0|0[d0]" in fc     # 按需加快装下:无截尾
+    assert "[1:a]atempo=0.8000,adelay=3000|3000[d1]" in fc  # 目标语速0.8
 
 
 # ---------------------------------------------------------------------------
@@ -1335,9 +1334,11 @@ def test_place_segments_tracks_original_starts_and_respects_hard_breaks():
     ]
     pl = place_segments(segs, video_dur=20.0)
     assert pl[0]["start"] == 0.0
-    assert pl[1]["start"] == 3.55            # 前句0+3.2+0.35呼吸:后让不重叠
+    assert pl[1]["start"] == 4.35            # 前句0+3.2/0.8+0.35呼吸:后让不重叠
     assert pl[2]["start"] == 12.0            # 大停顿保留,锚回原位(画面同步)
-    assert all(p["factor"] == 1.0 and p["cut"] is None for p in pl)
+    assert pl[0]["factor"] == pl[1]["factor"] == 0.8   # 装得下→目标语速0.8(纪录片感)
+    assert pl[2]["factor"] == 0.8
+    assert all(p["cut"] is None for p in pl)
 
 
 def test_place_segments_keeps_slack_at_original_positions():
@@ -1351,3 +1352,4 @@ def test_place_segments_keeps_slack_at_original_positions():
     ]
     pl = place_segments(segs, video_dur=10.0)
     assert [p["start"] for p in pl] == [0.0, 2.2, 4.5]   # 全部贴原点,不提前
+    assert all(p["factor"] == 0.8 for p in pl)           # 中文远短于原声:统一降速拉满

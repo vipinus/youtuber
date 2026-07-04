@@ -71,7 +71,9 @@ DEFAULT_WATERMARK = "assets/watermark_tr.png"          # P7 T18：跟 d8_meta �
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
-MAX_TEMPO = 1.25              # 按角色分块变速的封顶(用户定 2026-07-04:1.4 密集段听不清;块内统一速率见 _plan)
+MAX_TEMPO = 1.25              # 提速封顶(用户定:1.4 密集段听不清;段落统一速率见 place_segments)
+TARGET_TEMPO = 0.8            # 目标语速(用户定 2026-07-04:尽量 0.8x,慢而稳的纪录片感;
+                              # 同时天然拉满口型时间)。装不下才加快,封顶 MAX_TEMPO
 
 WM_MIN_SEC = 300.0            # P7 T18：水印切换间隔下限(5min)，config p7.wm_min_sec 覆盖
 WM_MAX_SEC = 600.0            # 水印切换间隔上限(10min)，config p7.wm_max_sec 覆盖
@@ -151,8 +153,10 @@ def place_segments(segments: list[dict], video_dur: float) -> list[dict]:
         m = len(idxs)
         speech = sum(float(segments[i].get("tts_dur", 0.0) or 0.0) for i in idxs)
         avail = max(p_end - p_start - SENT_PAUSE_SEC * (m - 1), 0.3)
-        need = speech / avail if speech > 0 else 1.0
-        factor = 1.0 if need <= 1.02 else min(need, MAX_TEMPO)
+        fit_need = speech / avail if speech > 0 else 1.0     # 硬约束:段落必须装进窗口
+        # 目标语速策略(用户定):尽量 TARGET_TEMPO(0.8x 纪录片感,同时拉满口型时间);
+        # 段落装不下才按需加快,封顶 MAX_TEMPO,再不够只截末句
+        factor = min(max(fit_need, TARGET_TEMPO), MAX_TEMPO)
 
         durs = [float(segments[i].get("tts_dur", 0.0) or 0.0) / factor for i in idxs]
         # suffix[k] = 第k句起到段落末所需的最小总时长(含句间呼吸)
@@ -197,7 +201,9 @@ def build_narration_filter(segments: list[dict], video_dur: float) -> str:
     parts: list[str] = []
     for idx, (seg, pl) in enumerate(zip(segments, placements)):
         ms = int(round(pl["start"] * 1000))
-        chain = f"atempo={pl['factor']:.4f}," if pl["factor"] > 1.0 else ""
+        # 注意:降速(<1.0)同样要输出 atempo——曾因 >1.0 条件静默丢弃 0.8 降速,
+        # 造成字幕按降速时长算、音频却原速播(配音提前结束)的隐性错位
+        chain = f"atempo={pl['factor']:.4f}," if abs(pl["factor"] - 1.0) > 1e-9 else ""
         if pl["cut"] is not None:
             fade_start = max(pl["cut"] - 0.2, 0.0)
             chain += f"atrim=0:{pl['cut']:.3f},afade=t=out:st={fade_start:.3f}:d=0.2,"
