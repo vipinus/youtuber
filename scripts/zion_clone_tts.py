@@ -175,6 +175,17 @@ def _slice_reference(
          str(out_path)],
         check=True, capture_output=True,
     )
+    # 参考能量门(2026-07-04 真跑踩坑:纯音乐片 vocals 全静音,F5 拿静音参考
+    # 输出咔咔声还发布了出去)——max_volume 低于 -45dB 视为无效参考,抛错让
+    # 该段走缺失路径,d4 自动回退 edge 语音,绝不再产出咔咔。
+    probe = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-i", str(out_path), "-af", "volumedetect",
+         "-f", "null", "-"], capture_output=True, text=True)
+    import re as _re
+    m = _re.search(r"max_volume:\s*(-?[\d.]+) dB", probe.stderr or "")
+    if m and float(m.group(1)) < -45.0:
+        out_path.unlink(missing_ok=True)
+        raise RuntimeError(f"参考切片近乎静音(max {m.group(1)}dB),弃用该参考")
     cache[ref_id] = out_path
     return out_path
 

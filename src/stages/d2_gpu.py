@@ -76,6 +76,14 @@ def run(ctx: Ctx) -> None:
             from src.util.jobs import write_json
             from src.util.ytsubs import genders_by_overlap, parse_json3_segments
             subs_segs = parse_json3_segments(subs_path)
+            whisper_n = len(read_json(ctx.job, OUTPUT).get("segments", []))
+            if subs_segs and whisper_n < 3:
+                # 物理证据门(2026-07-04 真跑踩坑):whisper 几乎没听到人声,而"字幕"
+                # 有内容——那字幕多半是屏幕文字/歌词(ISS POV 纯音乐片实锤,克隆拿
+                # 静音当参考输出咔咔声)。不信字幕,走 0 段拦截换片。
+                ctx.warn(f"{ctx.slug}: d2 平台字幕({len(subs_segs)}段)与whisper"
+                         f"({whisper_n}段)严重不符——疑似屏幕文字字幕,弃用字幕")
+                subs_segs = []
             if subs_segs:
                 whisper = read_json(ctx.job, OUTPUT)
                 genders_by_overlap(subs_segs, whisper.get("segments", []))

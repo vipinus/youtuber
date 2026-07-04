@@ -269,3 +269,38 @@ def test_module_import_does_no_network_at_top_level():
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in banned
 
+
+
+def test_subs_rejected_when_whisper_hears_nothing(tmp_path, monkeypatch):
+    """物理证据门(2026-07-04):whisper<3段而字幕有货=屏幕文字字幕(ISS POV纯音乐
+    片实锤),弃用字幕走0段拦截,绝不让静音参考进克隆。"""
+    import json as _json
+    import pytest
+    from src.config import Config
+    from src.context import Ctx
+    from src.errors import StageBlocked
+    from src.llm import FakeLLM
+    from src.stages import d2_gpu
+    from src.util.jobs import write_json
+
+    ctx = Ctx(slug="screentext", config=Config({"remote": {"provider": "fake"}}),
+              root=tmp_path / "jobs", llm=FakeLLM())
+    ctx.job.mkdir(parents=True, exist_ok=True)
+    # 屏幕文字型字幕(有货)
+    (ctx.job / "source_subs.json3").write_text(_json.dumps({"events": [
+        {"tStartMs": 1000, "dDurationMs": 3000, "segs": [{"utf8": "Columbus Laboratory Module."}]},
+    ]}), encoding="utf-8")
+
+    class SilentRemote:
+        def transcribe_separate(self, audio, out_dir):
+            write_json(out_dir, "transcript.json", {"duration": 60.0, "segments": []})  # whisper 0段
+            (out_dir / "no_vocals.mp3").write_bytes(b"N")
+            (out_dir / "vocals.mp3").write_bytes(b"V")
+            return {"transcript": out_dir / "transcript.json",
+                    "no_vocals": out_dir / "no_vocals.mp3", "vocals": out_dir / "vocals.mp3"}
+    monkeypatch.setattr(d2_gpu, "get_remote", lambda cfg: SilentRemote())
+    monkeypatch.setattr(d2_gpu, "_extract_audio", lambda s, o: o.write_bytes(b"A"))
+    (ctx.job / "source.mp4").write_bytes(b"MP4")
+
+    with pytest.raises(StageBlocked):   # 字幕被弃用→0段拦截换片
+        d2_gpu.run(ctx)

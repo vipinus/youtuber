@@ -102,8 +102,8 @@ def test_slice_reference_produces_decodable_wav_and_caches_by_id(tmp_path):
 
     vocals = tmp_path / "vocals.mp3"
     subprocess.run(
-        ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
-         "-t", "3", str(vocals)],
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "sine=frequency=220:sample_rate=24000",
+         "-t", "3", str(vocals)],   # 有声源:静音会被参考能量门正确拒掉(见下一测)
         check=True, capture_output=True,
     )
     ref_seg = _seg(7, 0.0, 2.0)
@@ -178,3 +178,18 @@ def test_int_to_cn_edges():
     assert f(1000) == "一千"
     assert f(10086) == "一万零八十六"
     assert f(120000) == "十二万"
+
+
+def test_slice_reference_rejects_silent_vocals(tmp_path):
+    """参考能量门(2026-07-04):纯音乐片 vocals 全静音,F5 拿静音参考输出咔咔声
+    ——静音切片必须抛错,让 d4 走 edge 回退。"""
+    import subprocess
+    import pytest
+    from scripts.zion_clone_tts import _slice_reference
+
+    vocals = tmp_path / "vocals.mp3"
+    subprocess.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+         "-t", "3", str(vocals)], check=True, capture_output=True)
+    with pytest.raises(RuntimeError, match="静音"):
+        _slice_reference(vocals, _seg(7, 0.0, 2.0), {}, tmp_path)
