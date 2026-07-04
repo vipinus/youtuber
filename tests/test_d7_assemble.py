@@ -1307,3 +1307,12 @@ def test_ensure_fd_limit_raises_soft_limit():
         assert soft1 >= need
     finally:
         resource.setrlimit(resource.RLIMIT_NOFILE, (soft0, hard0))
+
+
+def test_narration_filter_loudness_normalizes_voice():
+    """用户反馈(2026-07-04):配音音量太小——旁白轨 amix 后统一 loudnorm 到 -16 LUFS。"""
+    from src.stages.d7_assemble import build_narration_filter
+    fc = build_narration_filter(
+        [{"start": 0.0, "tts_dur": 3.0, "file": "narration/n000.wav"}], 20.0)
+    assert "loudnorm=I=-16" in fc
+    assert fc.index("amix") < fc.index("loudnorm") < fc.index("apad")   # 混完归一再补齐

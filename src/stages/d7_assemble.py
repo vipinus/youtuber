@@ -118,7 +118,12 @@ def build_narration_filter(segments: list[dict], video_dur: float) -> str:
             chain += f"atrim=0:{window:.3f},afade=t=out:st={fade_start:.3f}:d=0.2,"
         parts.append(f"[{idx}:a]{chain}adelay={ms}|{ms}[d{idx}]")
     parts.append("".join(f"[d{idx}]" for idx in range(n)) + f"amix=inputs={n}:normalize=0[nar]")
-    parts.append(f"[nar]apad=whole_dur={video_dur},atrim=0:{video_dur}[narp]")
+    # 旁白响度归一到 -16 LUFS(用户反馈 2026-07-04:配音音量太小)——F5 克隆输出
+    # 响度不齐且普遍偏轻,归一后旁白稳坐主声部,背景床(bg_gain+侧链)相对自然退后。
+    # loudnorm 门控测量会剔除静默间隙,不会被 96min 里的大段无旁白拉偏;其内部
+    # 升到 192kHz,aresample 拉回 48k 再进后续混音。
+    parts.append(f"[nar]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,"
+                 f"apad=whole_dur={video_dur},atrim=0:{video_dur}[narp]")
     return ";".join(parts)
 
 
