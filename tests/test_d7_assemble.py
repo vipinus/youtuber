@@ -1353,3 +1353,22 @@ def test_place_segments_keeps_slack_at_original_positions():
     pl = place_segments(segs, video_dur=10.0)
     assert [p["start"] for p in pl] == [0.0, 2.2, 4.5]   # 全部贴原点,不提前
     assert all(p["factor"] == 0.8 for p in pl)           # 中文远短于原声:统一降速拉满
+
+
+def test_assemble_cmd_vocals_sidechain_suppresses_residual_speech(tmp_path):
+    """用户反馈(2026-07-04):配音间隙偶尔漏英文原声——原声 vocals 当侧链钥匙,
+    原片说话处强压背景床(确定性灭残留),旁白 duck 链保持不变。"""
+    from src.stages.d7_assemble import build_assemble_cmd
+    vocals = tmp_path / "vocals.mp3"; vocals.write_bytes(b"V")
+    cmd = build_assemble_cmd(tmp_path / "s.mp4", tmp_path / "nv.mp3", tmp_path / "narr.wav",
+                             tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5,
+                             vocals=vocals)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[bg][3:a]sidechaincompress=threshold=0.02:ratio=12" in fc   # 人声钥匙强压
+    assert "[bgv][2:a]sidechaincompress=threshold=0.03:ratio=8" in fc   # 旁白duck接力
+    assert str(vocals) in cmd
+    # 不传 vocals 走老链路
+    cmd2 = build_assemble_cmd(tmp_path / "s.mp4", tmp_path / "nv.mp3", tmp_path / "narr.wav",
+                              tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5)
+    fc2 = cmd2[cmd2.index("-filter_complex") + 1]
+    assert "[bg][2:a]sidechaincompress" in fc2 and "bgv" not in fc2

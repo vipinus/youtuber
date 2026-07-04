@@ -351,7 +351,7 @@ def build_assemble_cmd(
     source: Path, bg: Path, narration: Path | None, subs: Path, out_path: Path, bg_gain: float,
     bg_input_opts: list[str] | None = None, encoder: str = "libx264",
     video_dur: float | None = None, slug: str = "", config: Config | None = None,
-    warn: Callable[[str], None] | None = None,
+    warn: Callable[[str], None] | None = None, vocals: Path | None = None,
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
     再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
@@ -377,10 +377,20 @@ def build_assemble_cmd(
     if narration is not None:
         cmd += ["-i", str(narration)]
         wm_idx = 3
+        bed = f"[1:a]volume={bg_gain}[bg];"
+        bed_label = "[bg]"
+        if vocals is not None:
+            # 原声人声轨当侧链钥匙(用户反馈 2026-07-04:配音间隙偶尔漏英文原声):
+            # demucs 两遍分离仍有渗漏,渗漏只出现在原片有人说话处——vocals 有能量
+            # 的每一刻把背景床强压下去,确定性灭残留;无人说话时环境声不受影响
+            cmd += ["-i", str(vocals)]
+            wm_idx = 4
+            bed += "[bg][3:a]sidechaincompress=threshold=0.02:ratio=12:attack=10:release=250[bgv];"
+            bed_label = "[bgv]"
         audio_fc = (
-            f"[1:a]volume={bg_gain}[bg];"
-            f"[bg][2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
-            f"[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
+            bed
+            + f"{bed_label}[2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
+            + "[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
         )
     else:
         audio_fc = f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout]"
@@ -517,12 +527,20 @@ def run(ctx: Ctx) -> None:
 
     encoder = ctx.config.get("p7.encoder", "libx264")
 
+    # 原声床(original 模式)才需要人声侧链压残留;换乐床没有渗漏源
+    vocals_path: Path | None = None
+    if picked is None and narration_path is not None:
+        restore_from_archive(job, "vocals.mp3", ctx.config, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
+        if (job / "vocals.mp3").exists():
+            vocals_path = job / "vocals.mp3"
+
     def wm_warn(msg: str) -> None:
         ctx.warn(f"{ctx.slug}: {msg}")
 
     cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                bg_input_opts, encoder=encoder,
-                               video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn)
+                               video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
+                               vocals=vocals_path)
     env2 = nvenc_env(ctx.config) if encoder == "nvenc" else None
     proc2 = subprocess.run(cmd2, capture_output=True, text=True, env=env2)
     if proc2.returncode != 0 and encoder == "nvenc":
@@ -532,7 +550,8 @@ def run(ctx: Ctx) -> None:
                  f"{(proc2.stderr or '')[-500:]}")
         cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                    bg_input_opts, encoder="libx264",
-                                   video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn)
+                                   video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
+                                   vocals=vocals_path)
         proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(
