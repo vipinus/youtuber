@@ -271,10 +271,18 @@ def main(argv: list[str]) -> int:
     work_dir = out_dir / "_work"
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    wav16k = _make_16k_mono(audio_in, work_dir)
+    # 先分离后转录(2026-07-04 用户反馈:对讲机对话 large-v3 仍漏)——无线电人声
+    # 和环境音/配乐混叠是漏抓主因,用分离出的纯人声轨喂 whisper,识别条件质变;
+    # vocals 与原片同一时间轴,时间戳无需换算。分离/转码意外失败退回原混音轨。
+    vocals, no_vocals = separate(audio_in, work_dir)
+    try:
+        wav16k = _make_16k_mono(vocals, work_dir)
+    except Exception:  # noqa: BLE001
+        traceback.print_exc()
+        print("vocals 转 16k 失败,退回原混音轨转录", file=sys.stderr)
+        wav16k = _make_16k_mono(audio_in, work_dir)
     transcript = transcribe(wav16k, model_name)
 
-    vocals, no_vocals = separate(audio_in, work_dir)
     no_vocals = purify_bed(no_vocals, work_dir)      # 二次净化压残留人声(2026-07-04 用户反馈)
     shutil.copyfile(no_vocals, out_dir / "no_vocals.mp3")
     shutil.copyfile(vocals, out_dir / "vocals.mp3")  # P7 T17：克隆配音参考音色来源
