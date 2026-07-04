@@ -204,18 +204,20 @@ def _yt_list_channel(ytdlp: str, channel: str, limit: int) -> list[dict]:
     return [e for e in (data.get("entries") or []) if e]
 
 
-def _yt_view_count(ytdlp: str, video_id: str) -> int:
-    """单条视频真实播放量(频道扁平列表里 view_count 恒为空,实测 2026-07-03;
-    sort=p 热门排序参数也被 yt-dlp 忽略——只能逐条 --print view_count,不下载)。"""
+def _yt_video_stats(ytdlp: str, video_id: str) -> tuple[int, int]:
+    """单条视频 (播放量, 点赞数)。频道扁平列表两者恒为空(实测 2026-07-03),
+    只能逐条 --print,不下载。任一取不到记 0。"""
     import subprocess
     try:
         out = subprocess.run(
-            [ytdlp, "-s", "--print", "view_count", "--no-playlist",
+            [ytdlp, "-s", "--print", "%(view_count)s|%(like_count)s", "--no-playlist",
              f"https://www.youtube.com/watch?v={video_id}"],
             capture_output=True, text=True, timeout=60, check=True)
-        return int(out.stdout.strip().splitlines()[-1])
+        v, _, l = out.stdout.strip().splitlines()[-1].partition("|")
+        toint = lambda x: int(x) if x.strip().isdigit() else 0  # noqa: E731
+        return toint(v), toint(l)
     except Exception:
-        return 0
+        return 0, 0
 
 
 def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_bytes: int) -> None:
@@ -294,8 +296,13 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             continue
         survivors.append((e, channel))
     for e, _ in survivors:
-        e["view_count"] = e.get("view_count") or _yt_view_count(ytdlp, e["id"])
-    survivors.sort(key=lambda t: t[0].get("view_count") or 0, reverse=True)
+        if not e.get("view_count") or e.get("like_count") is None:
+            v, l = _yt_video_stats(ytdlp, e["id"])
+            e["view_count"] = e.get("view_count") or v
+            e["like_count"] = e.get("like_count") if e.get("like_count") is not None else l
+    # 用户定(2026-07-04):好评(点赞)优先,播放量次之
+    survivors.sort(key=lambda t: (t[0].get("like_count") or 0, t[0].get("view_count") or 0),
+                   reverse=True)
 
     for e, channel in survivors:
         vid = e["id"]
@@ -320,6 +327,7 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             "attribution": f"Source: {label} (U.S. government work, public domain).",
             "duration": dur,
             "view_count": e.get("view_count"),
+            "like_count": e.get("like_count"),
             "source_url": f"https://www.youtube.com/watch?v={vid}",
             "resolution": f"{height}p",
         })
