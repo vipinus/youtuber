@@ -42,13 +42,57 @@ def _seg_cue_lines(
     return lines
 
 
-def run(ctx: Ctx) -> None:
-    data = read_json(ctx.job, INPUT)
-    segments = data.get("segments", [])
-    max_chars = ctx.config.get("subs.max_chars", 20)
+def _dub_windows(narr_segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
+    """逐段算配音在成片里的真实播放窗口 [start, start+有效时长]。
 
+    用户反馈(2026-07-04, Cosmic Dawn):字幕跟英文原声时间轴、配音跟自己的时长,
+    两条线错位——中文说完字幕还挂着,压速段字幕先于人声。修法:字幕改跟配音。
+    有效时长 = min(tts_dur/atempo压缩比, 窗口)——与 d7_assemble 的实际摆放逻辑
+    完全同源(共用 _plan),包括压满截尾的段,保证字幕消失点=声音结束点。"""
+    from src.stages.d7_assemble import _plan
+    plan = _plan(narr_segments, video_dur)
+    out: list[tuple[float, float]] = []
+    for seg, (factor, window) in zip(narr_segments, plan):
+        start = float(seg.get("start", 0.0))
+        dur = float(seg.get("tts_dur", 0.0) or 0.0)
+        eff = min(dur / factor if factor > 0 else dur, window)
+        if eff <= 0:
+            eff = min(2.0, window)   # 无时长信息的残段:给个短窗,别让字幕消失不掉
+        out.append((start, start + eff))
+    return out
+
+
+def run(ctx: Ctx) -> None:
+    max_chars = ctx.config.get("subs.max_chars", 20)
     lines: list[tuple[float, float, str]] = []
     skipped = 0
+
+    narr_path = ctx.job / "narration.json"
+    if narr_path.exists():
+        # 配音时间轴优先:字幕跟声走(见 _dub_windows)。video_dur 只影响末段窗口,
+        # 源片探测失败退化为"末段起点+时长+1s",不炸。
+        narr = read_json(ctx.job, "narration.json")
+        segments = [s for s in narr.get("segments", []) if s.get("file")]
+        try:
+            from src.util.ffprobe import duration_sec
+            video_dur = duration_sec(ctx.job / "source.mp4")
+        except Exception:
+            last = segments[-1] if segments else {}
+            video_dur = float(last.get("start", 0.0)) + float(last.get("tts_dur", 0.0) or 0.0) + 1.0
+        for seg, (s, e) in zip(segments, _dub_windows(segments, video_dur)):
+            zh = (seg.get("zh") or "").strip()
+            if not zh:
+                skipped += 1
+                continue
+            lines += _seg_cue_lines(zh, s, e, max_chars)
+        (ctx.job / OUTPUT).write_text(render_ass(lines), encoding="utf-8")
+        if skipped:
+            ctx.warn(f"{ctx.slug}: d5_subs 有 {skipped}/{len(segments)} 段 zh 为空，已跳过字幕")
+        return
+
+    # 老路径(无配音时间轴):按 zh_script 的原片段级 [start,end] 分布
+    data = read_json(ctx.job, INPUT)
+    segments = data.get("segments", [])
     for seg in segments:
         zh = (seg.get("zh") or "").strip()
         if not zh:

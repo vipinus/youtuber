@@ -142,6 +142,25 @@ def separate(audio_in: Path, work_dir: Path) -> tuple[Path, Path]:
     return vocals, no_vocals
 
 
+def purify_bed(no_vocals: Path, work_dir: Path) -> Path:
+    """背景床二次净化:对 no_vocals 再跑一遍分离,取第二遍的 no_vocals。
+
+    为什么:单遍 htdemucs_ft 在"人声压着配乐"的段落有渗漏,背景床间隙里能听到
+    残留英文原声(用户反馈,Cosmic Dawn 原声版)。第二遍把首遍漏掉的人声再剥一层,
+    实测能明显压低残留。首遍已把人声能量拿掉大半,第二遍输入更"干净",不伤配乐。
+    失败(任何异常)返回原 no_vocals——净化是增强,不是新故障点。"""
+    try:
+        pure_dir = work_dir / "bed_pass2"
+        pure_dir.mkdir(parents=True, exist_ok=True)
+        _, nv2 = separate(no_vocals, pure_dir)
+        if nv2.exists() and nv2.stat().st_size > 0:
+            print("背景床二次净化完成")
+            return nv2
+    except Exception as e:  # noqa: BLE001
+        print(f"背景床二次净化失败({type(e).__name__}),沿用首遍 no_vocals")
+    return no_vocals
+
+
 def _separate_once(audio_in: Path, demucs_out: Path) -> tuple[Path, Path]:
     attempts = [("htdemucs_ft", "cuda"), ("htdemucs_ft", "cpu"), ("htdemucs", "cpu")]
     last_err: Exception | None = None
@@ -250,6 +269,7 @@ def main(argv: list[str]) -> int:
     transcript = transcribe(wav16k, model_name)
 
     vocals, no_vocals = separate(audio_in, work_dir)
+    no_vocals = purify_bed(no_vocals, work_dir)      # 二次净化压残留人声(2026-07-04 用户反馈)
     shutil.copyfile(no_vocals, out_dir / "no_vocals.mp3")
     shutil.copyfile(vocals, out_dir / "vocals.mp3")  # P7 T17：克隆配音参考音色来源
 

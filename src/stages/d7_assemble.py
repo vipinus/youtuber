@@ -95,7 +95,7 @@ def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
 def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
     """逐段算 atempo 压缩比：配音若长过「到下一条旁白开播」的窗口就压回去(留间隙)，
     否则 1.0 保持原速。真跑发现 -18% 慢速让 85% 段溢出槽位、叠到下一条上——
-    字幕锚定原时间轴，压音频不压字幕，同步不受影响。"""
+    字幕由 d5 按同一 _plan 跟配音窗口对齐(2026-07-04 修:原"字幕锚原轴"的假设在时长不匹配时错位)。"""
     return [f for f, _ in _plan(segments, video_dur)]
 
 

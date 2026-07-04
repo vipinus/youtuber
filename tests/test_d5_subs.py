@@ -151,3 +151,36 @@ def test_module_import_does_no_network_at_top_level():
             assert all(a.name.split(".")[0] not in banned for a in node.names)
         if isinstance(node, ast.ImportFrom):
             assert (node.module or "").split(".")[0] not in banned
+
+
+def test_subs_follow_dub_windows_when_narration_exists(tmp_path, monkeypatch):
+    """用户反馈(2026-07-04):字幕要跟配音实际窗口——中文说完字幕即消失,
+    压速段字幕同步压缩,不再跟英文原声时间轴。"""
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    from src.stages import d5_subs
+    from src.util.jobs import write_json
+
+    ctx = Ctx(slug="dubsync", config=Config({}), root=tmp_path / "jobs", llm=FakeLLM())
+    # 原片段 0-10s,但中文 4s 就说完;下一段 20s 开播
+    write_json(ctx.job, "zh_script.json", {"segments": [
+        {"id": 0, "start": 0.0, "end": 10.0, "zh": "第一段旁白内容"},
+        {"id": 1, "start": 20.0, "end": 30.0, "zh": "第二段旁白内容"},
+    ]})
+    write_json(ctx.job, "narration.json", {"segments": [
+        {"id": 0, "start": 0.0, "tts_dur": 4.0, "zh": "第一段旁白内容", "file": "narration/n000.wav"},
+        {"id": 1, "start": 20.0, "tts_dur": 8.0, "zh": "第二段旁白内容", "file": "narration/n001.wav"},
+    ]})
+    monkeypatch.setattr(d5_subs, "read_json", d5_subs.read_json)  # no-op,占位说明真读文件
+
+    d5_subs.run(ctx)
+
+    ass = (ctx.job / "subs.ass").read_text(encoding="utf-8")
+    dialogue = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
+    assert len(dialogue) == 2
+    # 段0:字幕 0:00:00.00 -> 0:00:04.00(配音4s),不是原片的10s
+    assert "0:00:04.00" in dialogue[0]
+    assert "0:00:10.00" not in dialogue[0]
+    # 段1:20s 起,8s 中文 -> 28s 收
+    assert "0:00:20.00" in dialogue[1] and "0:00:28.00" in dialogue[1]
