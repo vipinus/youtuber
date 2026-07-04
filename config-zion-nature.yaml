@@ -74,7 +74,7 @@ p7:                        # 题材2 自然/野生动物:主供给=官方联邦�
     - us-national-archives
     - publicmovies
   bg_gain: 0.5              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
-  bgm: replace              # d7_assemble 背景床来源：replace(默认，免版税) | original(demucs no_vocals)
+  bgm: original             # 用户定(2026-07-04):换乐版BGM压过人声,先停换乐用原声背景床(接受Content ID认领风险)
                              # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
                              # 配乐，demucs 去人声后原样保留在 no_vocals 背景床里，触发 4 条 YouTube
                              # Content ID 版权认领(不下架但拦变现)。replace 换成 assets/bgm 下的
@@ -104,6 +104,7 @@ youtube_en:                  # P7 T20：d9c_publish_en——英文原声原片(s
   enabled: true              # zion 生产开(secrets/token_en.json 已走过一次性授权，选第二个 Google 账号)
   token: secrets/token_en.json
   client_secret: secrets/client_secret_en.json  # 独立OAuth客户端(SUMMIT项目,独立配额池)
+  replace_bgm: false         # 用户定(2026-07-04):停换乐,英文版直传原声原片
   visibility: unlisted       # 英文源片频道:unlisted 起步(护栏#3:从不默认 public)
   playlist: "Nature / Wildlife Archive"
 archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
