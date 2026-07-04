@@ -231,6 +231,30 @@ def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_byt
         capture_output=True, text=True, timeout=7200, check=True)
 
 
+def _yt_download_subs(ytdlp: str, video_id: str, job: Path) -> bool:
+    """尽力下载英文字幕(人工优先,自动兜底)为 job/source_subs.json3。
+    平台字幕是 youtube_gov 片源的转录真值来源(见 d2/ytsubs);拿不到不报错,
+    d2 自动回退 whisper。"""
+    import subprocess
+    for flag, langs in (("--write-subs", "en.*,en"), ("--write-auto-subs", "en-orig,en")):
+        try:
+            subprocess.run(
+                [ytdlp, "--skip-download", flag, "--sub-langs", langs,
+                 "--sub-format", "json3", "-o", str(job / "source_subs.%(ext)s"),
+                 "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+                capture_output=True, text=True, timeout=300, check=True)
+        except Exception:  # noqa: BLE001
+            continue
+        hits = sorted(job.glob("source_subs*.json3"))
+        if hits:
+            if hits[0] != job / "source_subs.json3":
+                hits[0].replace(job / "source_subs.json3")
+                for extra in hits[1:]:
+                    extra.unlink(missing_ok=True)
+            return True
+    return False
+
+
 def _probe_height(path: Path) -> int:
     """ffprobe 实测视频高度(下载后纵深校验,不信任元数据)。"""
     import subprocess
@@ -319,6 +343,9 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             ctx.warn(f"d1_source: {identifier} 实测不达标(height={height})或无音轨，弃用")
             (ctx.job / OUTPUT).unlink(missing_ok=True)
             continue
+        has_subs = _yt_download_subs(ytdlp, vid, ctx.job)
+        if not has_subs:
+            ctx.warn(f"d1_source: {identifier} 无可用英文字幕,d2 将用 whisper 转录")
         label = str(e.get("channel") or e.get("uploader") or channel)
         write_json(ctx.job, META_OUTPUT, {
             "identifier": identifier,

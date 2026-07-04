@@ -66,6 +66,26 @@ def run(ctx: Ctx) -> None:
     _land(Path(result["no_vocals"]), no_vocals_path)
     _land(Path(result["vocals"]), vocals_path)
 
+    # 平台字幕优先(2026-07-04):youtube_gov 片源若 d1 落了 source_subs.json3
+    # (YouTube 字幕,人工或自动),用它替换 whisper 文本/时间轴——对讲机/无线电
+    # 对话 whisper 漏抓严重而平台 ASR 是主场(实测 264条 vs 39段)。whisper 转录
+    # 仍保留:它带基频性别,按时间重叠映射给字幕段;解析失败回退 whisper,不新增故障。
+    subs_path = ctx.job / "source_subs.json3"
+    if subs_path.exists():
+        try:
+            from src.util.jobs import write_json
+            from src.util.ytsubs import genders_by_overlap, parse_json3_segments
+            subs_segs = parse_json3_segments(subs_path)
+            if subs_segs:
+                whisper = read_json(ctx.job, OUTPUT)
+                genders_by_overlap(subs_segs, whisper.get("segments", []))
+                write_json(ctx.job, OUTPUT, {"duration": whisper.get("duration"),
+                                             "segments": subs_segs})
+                ctx.warn(f"{ctx.slug}: d2 使用平台字幕转录({len(subs_segs)}段,"
+                         f"whisper {len(whisper.get('segments', []))}段仅供性别映射)")
+        except Exception as e:  # noqa: BLE001 — 字幕解析失败回退 whisper
+            ctx.warn(f"{ctx.slug}: d2 平台字幕解析失败({type(e).__name__}),沿用 whisper 转录")
+
     data = read_json(ctx.job, OUTPUT)
     segments = data.get("segments", [])
     if not segments:
