@@ -76,14 +76,16 @@ def _write_bgm_fixture(bgm_dir: Path, n_tracks: int = 2) -> None:
 # ---------------------------------------------------------------------------
 
 def test_build_narration_filter_adelay_per_segment_and_amix_count():
-    segs = [
+    segs = [  # tts_dur=0 的占位段:重排后各段起点=段落锚点顺排(0时长段紧贴)
         {"id": 0, "start": 1.5, "file": "narration/n000.mp3"},
         {"id": 1, "start": 4.0, "file": "narration/n001.mp3"},
         {"id": 2, "start": 10.25, "file": "narration/n002.mp3"},
     ]
     fc = build_narration_filter(segs, 20.0)
+    # 段落重排(2026-07-04):无时长信息时 0/1 并入同段落(起点差<PARA_GAP),顺排
+    # 从段落锚点1.5s起;seg2 与 seg1 起点差 6.25s>2.5 → 新段落锚回原位 10.25s
     assert "[0:a]adelay=1500|1500[d0]" in fc
-    assert "[1:a]adelay=4000|4000[d1]" in fc
+    assert "[1:a]adelay=1850|1850[d1]" in fc      # 1.5 + 0(时长) + 0.35 呼吸
     assert "[2:a]adelay=10250|10250[d2]" in fc
     assert "amix=inputs=3:normalize=0[nar]" in fc
     assert "[d0][d1][d2]amix" in fc                       # 三路都进了 amix
@@ -1219,13 +1221,16 @@ def test_tempo_factors_compress_overlapping_clips():
     最大需求,封顶1.25),块间可不同;字数预算把多数需求压到1.0附近。"""
     from src.stages.d7_assemble import tempo_factors, MAX_TEMPO
     segs = [
-        {"id": 0, "start": 0.0, "tts_dur": 7.42, "gender": "male"},   # 男声块:需1.93→封顶
-        {"id": 1, "start": 4.0, "tts_dur": 3.0, "gender": "male"},    # 同块跟随同一速率
-        {"id": 2, "start": 10.0, "tts_dur": 4.0, "gender": "female"}, # 女声块:装得下→1.0
+        {"id": 0, "start": 0.0, "tts_dur": 7.42, "gender": "male"},   # 男声段落:重排吃掉空白
+        {"id": 1, "start": 4.0, "tts_dur": 3.0, "gender": "male"},    # 同段落同一速率
+        {"id": 2, "start": 10.0, "tts_dur": 4.0, "gender": "female"}, # 女声段落:装得下→1.0
     ]
     f = tempo_factors(segs, video_dur=15.0)
-    assert f[0] == f[1] == MAX_TEMPO                # 块内一致
+    # 段落窗口=10-0.15=9.85, 语音10.42+呼吸0.35 → 需1.097(<封顶1.25:重排吃掉
+    # 空白后不再顶格——正是"利用空白降低语速"的效果)
+    assert f[0] == f[1] and 1.05 < f[0] < 1.15      # 段落内一致且远低于封顶
     assert f[2] == 1.0                              # 另一角色不受影响
+    assert MAX_TEMPO == 1.25
 
 
 def test_narration_filter_includes_atempo_only_when_needed():
@@ -1318,3 +1323,19 @@ def test_narration_filter_loudness_normalizes_voice():
         [{"start": 0.0, "tts_dur": 3.0, "file": "narration/n000.wav"}], 20.0)
     assert "loudnorm=I=-16" in fc
     assert fc.index("amix") < fc.index("loudnorm") < fc.index("apad")   # 混完归一再补齐
+
+
+def test_place_segments_repacks_paragraph_and_respects_hard_breaks():
+    """用户定(2026-07-04):段落内句子顺排+0.35s呼吸吃掉零碎空白;原间隙>2.5s
+    是自然停顿,保留为段落锚点不吞。"""
+    from src.stages.d7_assemble import place_segments
+    segs = [
+        {"id": 0, "start": 0.0, "end": 2.0, "tts_dur": 1.5, "gender": "male"},
+        {"id": 1, "start": 3.0, "end": 5.0, "tts_dur": 1.5, "gender": "male"},   # 原间隙1.0s→并段落
+        {"id": 2, "start": 12.0, "end": 14.0, "tts_dur": 1.5, "gender": "male"}, # 原间隙7s→新段落
+    ]
+    pl = place_segments(segs, video_dur=20.0)
+    assert pl[0]["start"] == 0.0
+    assert pl[1]["start"] == 1.85            # 0+1.5+0.35:空白被吃掉,句间只留呼吸
+    assert pl[2]["start"] == 12.0            # 大停顿保留,锚回原位
+    assert all(p["factor"] == 1.0 and p["cut"] is None for p in pl)

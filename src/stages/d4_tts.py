@@ -83,6 +83,7 @@ def _run_clone(ctx: Ctx, segments: list[dict], narration_dir: Path) -> None:
                 "zh": zh,
                 "voice": "clone",
                 "gender": seg.get("gender"),   # 供 d5/d7 按角色分块统一变速
+            "end": seg.get("end"),         # 原句英文结束点:d7 段落重排判句间隙用
             })
             continue
 
@@ -110,6 +111,7 @@ def _run_clone(ctx: Ctx, segments: list[dict], narration_dir: Path) -> None:
             "zh": zh,
             "voice": voice,
             "gender": seg.get("gender"),   # 供 d5/d7 按角色分块统一变速
+            "end": seg.get("end"),         # 原句英文结束点:d7 段落重排判句间隙用
         })
 
     _warn_skip_and_empty(ctx, segments, skipped, out_segments)
@@ -154,6 +156,7 @@ def run(ctx: Ctx) -> None:
             "zh": zh,
             "voice": voice,                       # 调试核对：这段实际用了哪个音色
             "gender": seg.get("gender"),          # 供 d5/d7 按角色分块统一变速
+            "end": seg.get("end"),                # 原句英文结束点:d7 段落重排判句间隙用
         })
 
     _warn_skip_and_empty(ctx, segments, skipped, out_segments)

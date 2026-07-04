@@ -88,45 +88,87 @@ def _speaker_key(seg: dict) -> str:
 def enrich_speaker_fields(segments: list[dict], job: Path) -> list[dict]:
     """旧 narration.json 没有 gender(2026-07-04 前的 d4 产物)——从 zh_script.json
     按 id 回填,供 _speaker_key 分块。新数据自带 gender,原样返回。"""
-    if any(s.get("gender") or s.get("speaker") for s in segments):
+    need_gender = not any(s.get("gender") or s.get("speaker") for s in segments)
+    need_end = not any(s.get("end") for s in segments)
+    if not (need_gender or need_end):
         return segments
     try:
         zh = read_json(job, "zh_script.json").get("segments", [])
-        gmap = {int(x.get("id", -1)): x.get("gender") for x in zh}
+        m = {int(x.get("id", -1)): x for x in zh}
         for s in segments:
-            s["gender"] = gmap.get(int(s.get("id", -1)))
-    except Exception:  # noqa: BLE001 — 回填失败退化为 voice 键分块,不新增故障
+            x = m.get(int(s.get("id", -1)), {})
+            if need_gender:
+                s["gender"] = x.get("gender")
+            if need_end:
+                s["end"] = x.get("end")
+    except Exception:  # noqa: BLE001 — 回填失败退化为 voice 键分块/起点差近似间隙,不新增故障
         pass
     return segments
 
 
-def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
-    """逐段算 (atempo 压缩比, 可用窗口秒)。窗口=到下一条旁白开播为止(留间隙)。
+PARA_GAP_SEC = 2.5            # 原片句间隙超过它=自然段落停顿,保留为硬锚点(不吞掉)
+SENT_PAUSE_SEC = 0.35         # 段落内重排后的句间呼吸(用户反馈:原空隙太长听着断)
 
-    变速规则(用户定 2026-07-04):按角色分块——同一角色的连续段共用一个速率
-    (块内取各段需求的最大值,封顶 MAX_TEMPO),块与块之间可以不同。这样每个人
-    的一段话语速恒定,不出现逐句忽快忽慢;个别段封顶仍装不下→原速截尾兜底
-    (build_narration_filter)。字数预算(d3)先把大多数需求压到 1.0 附近。"""
+
+def _orig_gap(prev: dict, seg: dict) -> float:
+    """原片里 prev 说完到 seg 开口的间隙。prev 无 end(旧数据未回填)时用
+    prev.start+tts_dur 近似(中文时长≈量级参考,只影响分段粗细,不影响正确性)。"""
+    prev_end = prev.get("end")
+    if prev_end is None:
+        prev_end = float(prev.get("start", 0.0)) + float(prev.get("tts_dur", 0.0) or 0.0)
+    return float(seg.get("start", 0.0)) - float(prev_end)
+
+
+def place_segments(segments: list[dict], video_dur: float) -> list[dict]:
+    """段落级重排(用户定 2026-07-04):同一角色、原句间隙≤PARA_GAP 的连续句合成
+    一个"段落"。段落内句子顺排、句间固定 SENT_PAUSE 呼吸——把原文里零碎的空白
+    吃掉换流畅;整个段落一个速率(总时长适配段落窗口,封顶 MAX_TEMPO),空白被
+    利用后多数段落回到原速。段落起点锚在原首句 start(画面同步以段落粒度保持),
+    段落装不下时只截"最后一句"的尾(中间句永不截)。
+
+    返回逐段 placement:{"start","factor","dur","cut"(None|截到秒数)}。
+    d5 字幕与本函数共用同一结果,字幕永远贴配音。"""
     n = len(segments)
-    raws: list[tuple[float, float]] = []
-    for i, seg in enumerate(segments):
-        start = float(seg.get("start", 0.0))
-        dur = float(seg.get("tts_dur", 0.0) or 0.0)
-        next_start = float(segments[i + 1]["start"]) if i + 1 < n else video_dur
-        window = max(next_start - start - NARRATION_GAP_SEC, 0.3)
-        raws.append((dur / window if dur > 0 else 1.0, window))
+    if n == 0:
+        return []
+    # 分段落:角色变化 或 原间隙>PARA_GAP 断开
+    paras: list[list[int]] = [[0]]
+    for i in range(1, n):
+        if (_speaker_key(segments[i]) != _speaker_key(segments[i - 1])
+                or _orig_gap(segments[i - 1], segments[i]) > PARA_GAP_SEC):
+            paras.append([i])
+        else:
+            paras[-1].append(i)
 
-    plan: list[tuple[float, float]] = []
-    i = 0
-    while i < n:
-        j = i
-        while j < n and _speaker_key(segments[j]) == _speaker_key(segments[i]):
-            j += 1
-        block_need = max(need for need, _ in raws[i:j])
-        f = min(max(block_need, 1.0), MAX_TEMPO) if block_need > 1.02 else 1.0
-        plan += [(f, w) for _, w in raws[i:j]]
-        i = j
-    return plan
+    placements: list[dict] = [None] * n  # type: ignore[list-item]
+    for pi, idxs in enumerate(paras):
+        p_start = float(segments[idxs[0]].get("start", 0.0))
+        nxt = (float(segments[paras[pi + 1][0]].get("start", video_dur))
+               if pi + 1 < len(paras) else video_dur)
+        window = max(nxt - p_start - NARRATION_GAP_SEC, 0.3)
+        pauses = SENT_PAUSE_SEC * (len(idxs) - 1)
+        speech = sum(float(segments[i].get("tts_dur", 0.0) or 0.0) for i in idxs)
+        avail = max(window - pauses, 0.3)
+        need = speech / avail if speech > 0 else 1.0
+        factor = 1.0 if need <= 1.02 else min(need, MAX_TEMPO)
+        cur = p_start
+        for k, i in enumerate(idxs):
+            dur = float(segments[i].get("tts_dur", 0.0) or 0.0) / factor
+            cut = None
+            if k == len(idxs) - 1:               # 段落末句:不许越过窗口(封顶仍超→截尾)
+                allowed = p_start + window - cur
+                if dur > allowed + 0.05:
+                    cut = max(allowed, 0.3)
+            placements[i] = {"start": round(cur, 3), "factor": factor,
+                             "dur": round(min(dur, cut) if cut else dur, 3), "cut": cut}
+            cur += (min(dur, cut) if cut else dur) + SENT_PAUSE_SEC
+    return placements
+
+
+def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
+    """兼容旧签名:(factor, 该段可播时长)。新逻辑见 place_segments(段落重排)。"""
+    return [(p["factor"], p["dur"] if p["cut"] is None else p["cut"])
+            for p in place_segments(segments, video_dur)]
 
 
 def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
@@ -137,28 +179,21 @@ def tempo_factors(segments: list[dict], video_dur: float) -> list[float]:
 
 
 def build_narration_filter(segments: list[dict], video_dur: float) -> str:
-    """按每段 start 生成 (必要时 atempo 压时 +) adelay，再 amix 叠轨，
-    最后 apad/atrim 补齐/裁到源片时长。
-
-    压到 MAX_TEMPO 仍装不进窗口的段：硬截到窗口长 + 0.2s 淡出——宁可丢半句
-    尾音，绝不让两段旁白双声同放(用户实际听出叠音)。"""
+    """按 place_segments 的重排结果摆放:adelay 到新起点(段落内顺排),整段落统一
+    atempo,只有段落末句可能截尾+淡出(中间句重排后必然装得下)。"""
     n = len(segments)
-    plan = _plan(segments, video_dur)
+    placements = place_segments(segments, video_dur)
     parts: list[str] = []
-    for idx, seg in enumerate(segments):
-        ms = int(round(float(seg.get("start", 0.0)) * 1000))
-        factor, window = plan[idx]
-        dur = float(seg.get("tts_dur", 0.0) or 0.0)
-        chain = f"atempo={factor:.4f}," if factor > 1.0 else ""
-        if dur > 0 and dur / factor > window + 0.05:   # 压满仍超窗 → 截尾+淡出
-            fade_start = max(window - 0.2, 0.0)
-            chain += f"atrim=0:{window:.3f},afade=t=out:st={fade_start:.3f}:d=0.2,"
+    for idx, (seg, pl) in enumerate(zip(segments, placements)):
+        ms = int(round(pl["start"] * 1000))
+        chain = f"atempo={pl['factor']:.4f}," if pl["factor"] > 1.0 else ""
+        if pl["cut"] is not None:
+            fade_start = max(pl["cut"] - 0.2, 0.0)
+            chain += f"atrim=0:{pl['cut']:.3f},afade=t=out:st={fade_start:.3f}:d=0.2,"
         parts.append(f"[{idx}:a]{chain}adelay={ms}|{ms}[d{idx}]")
     parts.append("".join(f"[d{idx}]" for idx in range(n)) + f"amix=inputs={n}:normalize=0[nar]")
     # 旁白响度归一到 -16 LUFS(用户反馈 2026-07-04:配音音量太小)——F5 克隆输出
     # 响度不齐且普遍偏轻,归一后旁白稳坐主声部,背景床(bg_gain+侧链)相对自然退后。
-    # loudnorm 门控测量会剔除静默间隙,不会被 96min 里的大段无旁白拉偏;其内部
-    # 升到 192kHz,aresample 拉回 48k 再进后续混音。
     parts.append(f"[nar]loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000,"
                  f"apad=whole_dur={video_dur},atrim=0:{video_dur}[narp]")
     return ";".join(parts)
@@ -447,11 +482,11 @@ def run(ctx: Ctx) -> None:
         write_json(job, JOB_BGM, picked["entry"])
 
     if segments:
-        overflow = [s.get("id") for s, (f, w) in zip(segments, _plan(segments, video_dur))
-                    if float(s.get("tts_dur", 0.0) or 0.0) / f > w + 0.05]
-        if overflow:
-            ctx.warn(f"{ctx.slug}: d7 有 {len(overflow)} 段原速仍超窗(截尾+淡出丢尾音): "
-                     f"seg {overflow[:8]}——比例高说明 d3 字数预算没压住,查翻译")
+        cut = [s.get("id") for s, pl in zip(segments, place_segments(segments, video_dur))
+               if pl["cut"] is not None]
+        if cut:
+            ctx.warn(f"{ctx.slug}: d7 有 {len(cut)} 个段落末句封顶仍超窗(截尾+淡出): "
+                     f"seg {cut[:8]}——比例高说明 d3 字数预算没压住,查翻译")
         narration_path = job / NARRATION_TRACK
         _ensure_fd_limit(len(segments) + 256)   # 每段一个输入fd;1261段撞默认1024上限(Cosmic Dawn真跑)
         cmd1 = build_narration_cmd(job, segments, video_dur, narration_path)

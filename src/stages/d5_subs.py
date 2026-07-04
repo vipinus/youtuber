@@ -45,20 +45,13 @@ def _seg_cue_lines(
 def _dub_windows(narr_segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
     """逐段算配音在成片里的真实播放窗口 [start, start+有效时长]。
 
-    用户反馈(2026-07-04, Cosmic Dawn):字幕跟英文原声时间轴、配音跟自己的时长,
-    两条线错位——中文说完字幕还挂着,压速段字幕先于人声。修法:字幕改跟配音。
-    有效时长 = min(tts_dur/atempo压缩比, 窗口)——与 d7_assemble 的实际摆放逻辑
-    完全同源(共用 _plan),包括压满截尾的段,保证字幕消失点=声音结束点。"""
-    from src.stages.d7_assemble import _plan
-    plan = _plan(narr_segments, video_dur)
+    字幕与配音共用 d7 的 place_segments 段落重排结果(2026-07-04 起):句子重排到
+    新起点、整段落统一速率、末句可能截尾——字幕出现=开口、消失=收声,完全同源。"""
+    from src.stages.d7_assemble import place_segments
     out: list[tuple[float, float]] = []
-    for seg, (factor, window) in zip(narr_segments, plan):
-        start = float(seg.get("start", 0.0))
-        dur = float(seg.get("tts_dur", 0.0) or 0.0)
-        eff = min(dur / factor if factor > 0 else dur, window)
-        if eff <= 0:
-            eff = min(2.0, window)   # 无时长信息的残段:给个短窗,别让字幕消失不掉
-        out.append((start, start + eff))
+    for pl in place_segments(narr_segments, video_dur):
+        eff = pl["dur"] if pl["dur"] > 0 else 2.0
+        out.append((pl["start"], pl["start"] + eff))
     return out
 
 
