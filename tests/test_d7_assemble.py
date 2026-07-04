@@ -1215,17 +1215,15 @@ def test_real_ffmpeg_smoke_replace_mode_produces_valid_video_with_looped_bgm(tmp
 
 
 def test_tempo_factors_compress_overlapping_clips():
-    """真跑发现:-18%慢速让85%段溢出槽位叠到下一条。tempo_factors 须逐段压回窗口。"""
-    from src.stages.d7_assemble import tempo_factors, MAX_TEMPO
+    """用户定(2026-07-04):不做逐句变速——MAX_TEMPO=1.0,任何段都不 atempo,
+    超窗靠截尾淡出;语速全片恒定,长度适配靠 d3 字数预算。"""
+    from src.stages.d7_assemble import tempo_factors
     segs = [
-        {"id": 0, "start": 0.0, "tts_dur": 7.42},   # 窗口4.0s→需压 7.42/3.85≈1.93→封顶1.4
-        {"id": 1, "start": 4.0, "tts_dur": 3.0},    # 窗口6.0s→装得下→1.0
-        {"id": 2, "start": 10.0, "tts_dur": 5.5},   # 末段,窗口=video_dur-start=5.0→压~1.13
+        {"id": 0, "start": 0.0, "tts_dur": 7.42},   # 超窗:也不变速(截尾兜底在 filter 层)
+        {"id": 1, "start": 4.0, "tts_dur": 3.0},    # 装得下
+        {"id": 2, "start": 10.0, "tts_dur": 5.5},   # 末段轻微超窗:同样不变速
     ]
-    f = tempo_factors(segs, video_dur=15.0)
-    assert f[0] == MAX_TEMPO                        # 超限封顶
-    assert f[1] == 1.0                              # 不溢出不动
-    assert 1.05 < f[2] < 1.2                        # 轻度压缩
+    assert tempo_factors(segs, video_dur=15.0) == [1.0, 1.0, 1.0]
 
 
 def test_narration_filter_includes_atempo_only_when_needed():
@@ -1233,7 +1231,8 @@ def test_narration_filter_includes_atempo_only_when_needed():
     segs = [{"id": 0, "start": 0.0, "tts_dur": 7.0},    # 窗口3s→要压
             {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "[0:a]atempo=1.4000,atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 压满仍超窗→截尾+淡出
+    assert "atempo" not in fc                            # 用户定:任何段都不变速
+    assert "[0:a]atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 超窗→原速截尾+淡出
     assert "[1:a]adelay=3000|3000[d1]" in fc            # 正常段不带
 
 
@@ -1249,12 +1248,14 @@ def test_capped_overlong_clip_is_trimmed_with_fade():
 
 
 def test_fitting_clip_not_trimmed():
-    """压缩后能装进窗口的段不截尾(只 atempo)。"""
+    """用户定(2026-07-04):不逐句变速。超窗段原速截尾;装得下的段原样不动。"""
     from src.stages.d7_assemble import build_narration_filter
-    segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3},    # 窗口2.85s,压1.16即装下
-            {"id": 1, "start": 3.0, "tts_dur": 1.0}]
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3},    # 窗口2.85s,原速超窗→截尾
+            {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下→不截不变速
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "atempo=" in fc and "atrim=0:2.850" not in fc
+    assert "atempo" not in fc
+    assert "atrim=0:2.850" in fc
+    assert "[1:a]adelay=3000|3000[d1]" in fc
 
 
 # ---------------------------------------------------------------------------

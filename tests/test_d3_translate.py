@@ -197,14 +197,15 @@ def test_large_transcript_is_chunked_and_merged_without_id_collisions(tmp_path):
 
     d3.run(ctx)
 
-    assert len(echo.calls) == 3          # 80 + 80 + 5
+    assert len(echo.calls) == 6          # 80+80+5 初译 + 全部超预算(echo恒回原文)定向返工再3批
     out = read_json(ctx.job, d3.OUTPUT)
     out_segs = out["segments"]
     assert len(out_segs) == n
     for i, seg in enumerate(out_segs):
         assert seg["id"] == i
         assert seg["zh"] == f"[ZH]sentence {i}"
-    assert ctx.warnings == []
+    # echo 假译文恒超小预算 → 允许唯一的"定向压缩返工"提示,不允许其它告警
+    assert all("定向压缩返工" in w for w in ctx.warnings)
 
 
 # ---------------------------------------------------------------------------

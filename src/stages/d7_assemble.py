@@ -71,7 +71,7 @@ DEFAULT_WATERMARK = "assets/watermark_tr.png"          # P7 T18：跟 d8_meta �
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
-MAX_TEMPO = 1.4               # atempo 压缩比封顶：再快听感就"赶"了；超限段保留少量重叠并告警
+MAX_TEMPO = 1.0               # 用户定(2026-07-04):不做逐句变速——每句速度不一致听感差。全片原速,靠 d3 字数预算把译文压进槽位;仍超窗的段截尾+淡出兜底。置 1.0 后 atempo 链自然不出现
 
 WM_MIN_SEC = 300.0            # P7 T18：水印切换间隔下限(5min)，config p7.wm_min_sec 覆盖
 WM_MAX_SEC = 600.0            # 水印切换间隔上限(10min)，config p7.wm_max_sec 覆盖
@@ -409,11 +409,11 @@ def run(ctx: Ctx) -> None:
         write_json(job, JOB_BGM, picked["entry"])
 
     if segments:
-        capped = [s.get("id") for s, f in zip(segments, tempo_factors(segments, video_dur))
-                  if f >= MAX_TEMPO]
-        if capped:
-            ctx.warn(f"{ctx.slug}: d7 有 {len(capped)} 段压到 atempo 上限 {MAX_TEMPO} 仍偏长"
-                     f"(可能残留轻微重叠): seg {capped[:8]}")
+        overflow = [s.get("id") for s, (f, w) in zip(segments, _plan(segments, video_dur))
+                    if float(s.get("tts_dur", 0.0) or 0.0) / f > w + 0.05]
+        if overflow:
+            ctx.warn(f"{ctx.slug}: d7 有 {len(overflow)} 段原速仍超窗(截尾+淡出丢尾音): "
+                     f"seg {overflow[:8]}——比例高说明 d3 字数预算没压住,查翻译")
         narration_path = job / NARRATION_TRACK
         _ensure_fd_limit(len(segments) + 256)   # 每段一个输入fd;1261段撞默认1024上限(Cosmic Dawn真跑)
         cmd1 = build_narration_cmd(job, segments, video_dur, narration_path)
