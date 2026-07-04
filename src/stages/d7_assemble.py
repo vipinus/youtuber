@@ -120,18 +120,20 @@ def _orig_gap(prev: dict, seg: dict) -> float:
 
 
 def place_segments(segments: list[dict], video_dur: float) -> list[dict]:
-    """段落级重排(用户定 2026-07-04):同一角色、原句间隙≤PARA_GAP 的连续句合成
-    一个"段落"。段落内句子顺排、句间固定 SENT_PAUSE 呼吸——把原文里零碎的空白
-    吃掉换流畅;整个段落一个速率(总时长适配段落窗口,封顶 MAX_TEMPO),空白被
-    利用后多数段落回到原速。段落起点锚在原首句 start(画面同步以段落粒度保持),
-    段落装不下时只截"最后一句"的尾(中间句永不截)。
+    """段落级排布 v2(用户反馈迭代 2026-07-04):
 
-    返回逐段 placement:{"start","factor","dur","cut"(None|截到秒数)}。
-    d5 字幕与本函数共用同一结果,字幕永远贴配音。"""
+    v1 把句子从段落锚点向左压实,富余全堆在段落尾——画面后半还在说话配音已
+    结束,接一段死寂(用户:图像在说话没声音/段落间空白太长)。v2 改为**贴原点
+    排布**:每句尽量回到自己的原片起点(空白按原位置留在句间),仅在与前句冲突
+    时向后让(至少 SENT_PAUSE 呼吸),或为给后面句子留够空间向前提。效果:
+    画面同步以句为粒度恢复,死寂消散,装得下的段落语速恒为 1.0x(用户:尽量≤1x);
+    只有真正超密的段落整段提速(封顶 MAX_TEMPO),仍不够只截末句尾。
+
+    段落 = 同角色且原句间隙≤PARA_GAP 的连续句;段落窗口到下一段落锚点为止。
+    返回逐段 {"start","factor","dur","cut"};d5 字幕共用,永远贴配音。"""
     n = len(segments)
     if n == 0:
         return []
-    # 分段落:角色变化 或 原间隙>PARA_GAP 断开
     paras: list[list[int]] = [[0]]
     for i in range(1, n):
         if (_speaker_key(segments[i]) != _speaker_key(segments[i - 1])
@@ -145,23 +147,32 @@ def place_segments(segments: list[dict], video_dur: float) -> list[dict]:
         p_start = float(segments[idxs[0]].get("start", 0.0))
         nxt = (float(segments[paras[pi + 1][0]].get("start", video_dur))
                if pi + 1 < len(paras) else video_dur)
-        window = max(nxt - p_start - NARRATION_GAP_SEC, 0.3)
-        pauses = SENT_PAUSE_SEC * (len(idxs) - 1)
+        p_end = max(nxt - NARRATION_GAP_SEC, p_start + 0.3)
+        m = len(idxs)
         speech = sum(float(segments[i].get("tts_dur", 0.0) or 0.0) for i in idxs)
-        avail = max(window - pauses, 0.3)
+        avail = max(p_end - p_start - SENT_PAUSE_SEC * (m - 1), 0.3)
         need = speech / avail if speech > 0 else 1.0
         factor = 1.0 if need <= 1.02 else min(need, MAX_TEMPO)
+
+        durs = [float(segments[i].get("tts_dur", 0.0) or 0.0) / factor for i in idxs]
+        # suffix[k] = 第k句起到段落末所需的最小总时长(含句间呼吸)
+        suffix = [0.0] * (m + 1)
+        for k in range(m - 1, -1, -1):
+            suffix[k] = durs[k] + (SENT_PAUSE_SEC + suffix[k + 1] if k + 1 < m else 0.0)
         cur = p_start
         for k, i in enumerate(idxs):
-            dur = float(segments[i].get("tts_dur", 0.0) or 0.0) / factor
+            orig = float(segments[i].get("start", 0.0))
+            latest = p_end - suffix[k]                 # 再晚就挤不下后面的句子
+            start_i = min(max(orig, cur), max(latest, cur))
+            dur = durs[k]
             cut = None
-            if k == len(idxs) - 1:               # 段落末句:不许越过窗口(封顶仍超→截尾)
-                allowed = p_start + window - cur
+            if k == m - 1:                             # 末句:封顶仍越窗才截尾
+                allowed = p_end - start_i
                 if dur > allowed + 0.05:
                     cut = max(allowed, 0.3)
-            placements[i] = {"start": round(cur, 3), "factor": factor,
+            placements[i] = {"start": round(start_i, 3), "factor": factor,
                              "dur": round(min(dur, cut) if cut else dur, 3), "cut": cut}
-            cur += (min(dur, cut) if cut else dur) + SENT_PAUSE_SEC
+            cur = start_i + (min(dur, cut) if cut else dur) + SENT_PAUSE_SEC
     return placements
 
 

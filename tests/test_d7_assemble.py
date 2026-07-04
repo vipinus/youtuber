@@ -82,10 +82,9 @@ def test_build_narration_filter_adelay_per_segment_and_amix_count():
         {"id": 2, "start": 10.25, "file": "narration/n002.mp3"},
     ]
     fc = build_narration_filter(segs, 20.0)
-    # 段落重排(2026-07-04):无时长信息时 0/1 并入同段落(起点差<PARA_GAP),顺排
-    # 从段落锚点1.5s起;seg2 与 seg1 起点差 6.25s>2.5 → 新段落锚回原位 10.25s
+    # 排布v2(2026-07-04):句子贴各自原片起点(有富余不移动,空白留在原位)
     assert "[0:a]adelay=1500|1500[d0]" in fc
-    assert "[1:a]adelay=1850|1850[d1]" in fc      # 1.5 + 0(时长) + 0.35 呼吸
+    assert "[1:a]adelay=4000|4000[d1]" in fc
     assert "[2:a]adelay=10250|10250[d2]" in fc
     assert "amix=inputs=3:normalize=0[nar]" in fc
     assert "[d0][d1][d2]amix" in fc                       # 三路都进了 amix
@@ -1325,17 +1324,30 @@ def test_narration_filter_loudness_normalizes_voice():
     assert fc.index("amix") < fc.index("loudnorm") < fc.index("apad")   # 混完归一再补齐
 
 
-def test_place_segments_repacks_paragraph_and_respects_hard_breaks():
-    """用户定(2026-07-04):段落内句子顺排+0.35s呼吸吃掉零碎空白;原间隙>2.5s
-    是自然停顿,保留为段落锚点不吞。"""
+def test_place_segments_tracks_original_starts_and_respects_hard_breaks():
+    """排布v2(用户定 2026-07-04):句子贴原片起点保画面同步;与前句冲突才后移
+    (留0.35s呼吸);原间隙>2.5s 是自然停顿,新段落锚回原位;装得下语速恒1.0。"""
     from src.stages.d7_assemble import place_segments
     segs = [
-        {"id": 0, "start": 0.0, "end": 2.0, "tts_dur": 1.5, "gender": "male"},
-        {"id": 1, "start": 3.0, "end": 5.0, "tts_dur": 1.5, "gender": "male"},   # 原间隙1.0s→并段落
-        {"id": 2, "start": 12.0, "end": 14.0, "tts_dur": 1.5, "gender": "male"}, # 原间隙7s→新段落
+        {"id": 0, "start": 0.0, "end": 2.8, "tts_dur": 3.2, "gender": "male"},   # 中文比原声长
+        {"id": 1, "start": 3.0, "end": 5.0, "tts_dur": 1.5, "gender": "male"},   # 原点3.0与前句冲突
+        {"id": 2, "start": 12.0, "end": 14.0, "tts_dur": 1.5, "gender": "male"}, # 原间隙>2.5→新段落
     ]
     pl = place_segments(segs, video_dur=20.0)
     assert pl[0]["start"] == 0.0
-    assert pl[1]["start"] == 1.85            # 0+1.5+0.35:空白被吃掉,句间只留呼吸
-    assert pl[2]["start"] == 12.0            # 大停顿保留,锚回原位
+    assert pl[1]["start"] == 3.55            # 前句0+3.2+0.35呼吸:后让不重叠
+    assert pl[2]["start"] == 12.0            # 大停顿保留,锚回原位(画面同步)
     assert all(p["factor"] == 1.0 and p["cut"] is None for p in pl)
+
+
+def test_place_segments_keeps_slack_at_original_positions():
+    """有富余时句子不向左压实——空白留在原句间位置,消灭段尾死寂(用户:图像
+    在说话没配音=v1把句子全提前了)。"""
+    from src.stages.d7_assemble import place_segments
+    segs = [
+        {"id": 0, "start": 0.0, "end": 2.0, "tts_dur": 1.0, "gender": "male"},
+        {"id": 1, "start": 2.2, "end": 4.4, "tts_dur": 1.0, "gender": "male"},
+        {"id": 2, "start": 4.5, "end": 6.0, "tts_dur": 1.0, "gender": "male"},
+    ]
+    pl = place_segments(segs, video_dur=10.0)
+    assert [p["start"] for p in pl] == [0.0, 2.2, 4.5]   # 全部贴原点,不提前
