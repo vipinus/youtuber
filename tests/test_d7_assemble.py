@@ -1372,3 +1372,16 @@ def test_assemble_cmd_vocals_sidechain_suppresses_residual_speech(tmp_path):
                               tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5)
     fc2 = cmd2[cmd2.index("-filter_complex") + 1]
     assert "[bg][2:a]sidechaincompress" in fc2 and "bgv" not in fc2
+
+
+def test_assemble_cmd_subs_only_keeps_original_audio(tmp_path):
+    """字幕版(2026-07-04 用户定):原声完整直通,无背景床/旁白输入,只烧字幕。"""
+    from src.stages.d7_assemble import build_assemble_cmd
+    cmd = build_assemble_cmd(tmp_path / "s.mp4", tmp_path / "nv.mp3", None,
+                             tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5,
+                             original_audio=True)
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    assert "[0:a]anull[aout]" in fc            # 原声直通
+    assert "sidechaincompress" not in fc       # 无duck链
+    assert str(tmp_path / "nv.mp3") not in cmd # 背景床压根不进输入
+    assert "subtitles=" in fc

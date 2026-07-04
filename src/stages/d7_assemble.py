@@ -352,6 +352,7 @@ def build_assemble_cmd(
     bg_input_opts: list[str] | None = None, encoder: str = "libx264",
     video_dur: float | None = None, slug: str = "", config: Config | None = None,
     warn: Callable[[str], None] | None = None, vocals: Path | None = None,
+    original_audio: bool = False,
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
     再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
@@ -371,10 +372,18 @@ def build_assemble_cmd(
     不传、video_dur=None、开关关、文件缺失/不可读)都直接跳过，按老逻辑拼命令；
     文件缺失时若传了 warn 会告警一次，绝不因为水印功能中止渲染。"""
     subs_esc = str(subs).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
-    cmd = ["ffmpeg", "-y", "-i", str(source)] + list(bg_input_opts or []) + ["-i", str(bg)]
-
-    wm_idx = 2
-    if narration is not None:
+    if original_audio:
+        # 字幕版(2026-07-04 用户定):无解说片保留原声完整音轨(音乐即内容),
+        # 不引入背景床/旁白,只烧字幕(+台标)。
+        cmd = ["ffmpeg", "-y", "-i", str(source)]
+        wm_idx = 1
+        audio_fc = "[0:a]anull[aout]"
+    else:
+        cmd = ["ffmpeg", "-y", "-i", str(source)] + list(bg_input_opts or []) + ["-i", str(bg)]
+        wm_idx = 2
+    if original_audio:
+        pass
+    elif narration is not None:
         cmd += ["-i", str(narration)]
         wm_idx = 3
         bed = f"[1:a]volume={bg_gain}[bg];"
@@ -477,10 +486,18 @@ def run(ctx: Ctx) -> None:
             restore_from_archive(job, seg["file"], ctx.config, _restored.append)
     narration_path: Path | None = None
 
+    # 字幕版(2026-07-04 用户定):无解说+有字幕→不配音,原声完整保留,只烧字幕+台标
+    subs_only = (exists(job, "zh_script.json")
+                 and read_json(job, "zh_script.json").get("mode") == "subs_only")
+    if subs_only:
+        ctx.warn(f"{ctx.slug}: d7 字幕版模式——原声保留,只烧中文字幕")
+
     bg = job / BACKGROUND
     bg_input_opts: list[str] = []
     picked = None
-    if bgm_mode == "replace":
+    if subs_only:
+        pass                                     # 不需要背景床/换乐,原声直通
+    elif bgm_mode == "replace":
         bgm_dir = Path(ctx.config.get("p7.bgm_dir", DEFAULT_BGM_DIR))
         # 按影片内容选曲(用户定):片名/署名关键词→情绪桶;d9c 英文版用同样输入,中英同曲
         src_meta = read_json(job, "source.json") if exists(job, "source.json") else {}
@@ -488,7 +505,7 @@ def run(ctx: Ctx) -> None:
         picked = pick_bgm_track(bgm_dir, ctx.slug, lambda m: ctx.warn(f"{ctx.slug}: {m}"), mood=mood)
     elif bgm_mode != "original":
         ctx.warn(f"{ctx.slug}: d7 未知 p7.bgm={bgm_mode!r}(应为 replace|original)，回退用 no_vocals 背景床")
-    if picked is None:   # original 模式/回退时才需要 no_vocals 背景床,一并找回
+    if picked is None and not subs_only:   # original 模式/回退时才需要 no_vocals 背景床,一并找回
         restore_from_archive(job, BACKGROUND, ctx.config, _restored.append)
     if _restored:
         ctx.warn(f"{ctx.slug}: 已从NAS归档恢复 {len(_restored)} 个媒体文件(d10 裁剪后重跑)")
@@ -523,13 +540,14 @@ def run(ctx: Ctx) -> None:
                 f"ffmpeg 旁白轨合成失败 (exit {proc1.returncode}):\n{(proc1.stderr or '')[-2000:]}"
             )
     else:
-        ctx.warn(f"{ctx.slug}: d7_assemble 无旁白段(narration.json 缺失或为空)，仅用背景+字幕合成")
+        if not subs_only:
+            ctx.warn(f"{ctx.slug}: d7_assemble 无旁白段(narration.json 缺失或为空)，仅用背景+字幕合成")
 
     encoder = ctx.config.get("p7.encoder", "libx264")
 
     # 原声床(original 模式)才需要人声侧链压残留;换乐床没有渗漏源
     vocals_path: Path | None = None
-    if picked is None and narration_path is not None:
+    if picked is None and narration_path is not None and not subs_only:
         restore_from_archive(job, "vocals.mp3", ctx.config, lambda m: ctx.warn(f"{ctx.slug}: {m}"))
         if (job / "vocals.mp3").exists():
             vocals_path = job / "vocals.mp3"
@@ -540,7 +558,7 @@ def run(ctx: Ctx) -> None:
     cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                bg_input_opts, encoder=encoder,
                                video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
-                               vocals=vocals_path)
+                               vocals=vocals_path, original_audio=subs_only)
     env2 = nvenc_env(ctx.config) if encoder == "nvenc" else None
     proc2 = subprocess.run(cmd2, capture_output=True, text=True, env=env2)
     if proc2.returncode != 0 and encoder == "nvenc":
@@ -551,7 +569,7 @@ def run(ctx: Ctx) -> None:
         cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                    bg_input_opts, encoder="libx264",
                                    video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
-                                   vocals=vocals_path)
+                                   vocals=vocals_path, original_audio=subs_only)
         proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(

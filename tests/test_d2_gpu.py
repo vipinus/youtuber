@@ -271,9 +271,9 @@ def test_module_import_does_no_network_at_top_level():
 
 
 
-def test_subs_rejected_when_whisper_hears_nothing(tmp_path, monkeypatch):
-    """物理证据门(2026-07-04):whisper<3段而字幕有货=屏幕文字字幕(ISS POV纯音乐
-    片实锤),弃用字幕走0段拦截,绝不让静音参考进克隆。"""
+def test_subs_only_mode_when_whisper_hears_nothing(tmp_path, monkeypatch):
+    """字幕版(2026-07-04 用户定):whisper<3段而字幕有货=无解说的字幕片(ISS POV
+    纯音乐片)——不再拦截,标记 mode=subs_only,下游跳过配音、保留原声、只烧字幕。"""
     import json as _json
     import pytest
     from src.config import Config
@@ -302,5 +302,10 @@ def test_subs_rejected_when_whisper_hears_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(d2_gpu, "_extract_audio", lambda s, o: o.write_bytes(b"A"))
     (ctx.job / "source.mp4").write_bytes(b"MP4")
 
-    with pytest.raises(StageBlocked):   # 字幕被弃用→0段拦截换片
-        d2_gpu.run(ctx)
+    d2_gpu.run(ctx)   # 不拦截:进入字幕版模式
+
+    from src.util.jobs import read_json
+    t = read_json(ctx.job, "transcript.json")
+    assert t["mode"] == "subs_only"
+    assert len(t["segments"]) == 1
+    assert "Columbus" in t["segments"][0]["text"]

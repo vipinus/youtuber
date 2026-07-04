@@ -136,4 +136,7 @@ def run(ctx: Ctx) -> None:
             "（LLM 返回条数不足），已回退用英文原文顶上"
         )
 
-    write_json(ctx.job, OUTPUT, {"duration": duration, "segments": out_segments})
+    out = {"duration": duration, "segments": out_segments}
+    if data.get("mode"):
+        out["mode"] = data["mode"]   # subs_only(字幕版)等模式贯穿下游
+    write_json(ctx.job, OUTPUT, out)

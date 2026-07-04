@@ -61,7 +61,12 @@ def run(ctx: Ctx) -> None:
     skipped = 0
 
     narr_path = ctx.job / "narration.json"
-    if narr_path.exists():
+    _narr_has_segs = (narr_path.exists()
+                      and any(s.get("file") for s in
+                              read_json(ctx.job, "narration.json").get("segments", [])))
+    # 字幕版(narration 空,mode=subs_only):跳过配音时间轴,直接走下面 zh_script
+    # 原字幕时间轴——字幕跟原片文字卡的出现/消失时刻
+    if _narr_has_segs:
         # 配音时间轴优先:字幕跟声走(见 _dub_windows)。video_dur 只影响末段窗口,
         # 源片探测失败退化为"末段起点+时长+1s",不炸。
         narr = read_json(ctx.job, "narration.json")

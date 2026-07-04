@@ -77,15 +77,16 @@ def run(ctx: Ctx) -> None:
             from src.util.ytsubs import genders_by_overlap, parse_json3_segments
             subs_segs = parse_json3_segments(subs_path)
             whisper_n = len(read_json(ctx.job, OUTPUT).get("segments", []))
+            whisper = read_json(ctx.job, OUTPUT)
             if subs_segs and whisper_n < 3:
-                # 物理证据门(2026-07-04 真跑踩坑):whisper 几乎没听到人声,而"字幕"
-                # 有内容——那字幕多半是屏幕文字/歌词(ISS POV 纯音乐片实锤,克隆拿
-                # 静音当参考输出咔咔声)。不信字幕,走 0 段拦截换片。
-                ctx.warn(f"{ctx.slug}: d2 平台字幕({len(subs_segs)}段)与whisper"
-                         f"({whisper_n}段)严重不符——疑似屏幕文字字幕,弃用字幕")
-                subs_segs = []
-            if subs_segs:
-                whisper = read_json(ctx.job, OUTPUT)
+                # 无解说+有字幕(2026-07-04 用户定)= 字幕版产品:字幕多为屏幕文字/
+                # 说明卡(ISS POV 纯音乐片),不配音、保留原声、只烧中文字幕直接发布。
+                # mode 标记贯穿 d3→d4(跳过配音)→d5(原字幕时间轴)→d7(原声完整保留)。
+                write_json(ctx.job, OUTPUT, {"duration": whisper.get("duration"),
+                                             "segments": subs_segs, "mode": "subs_only"})
+                ctx.warn(f"{ctx.slug}: d2 无解说+有字幕({len(subs_segs)}段)→字幕版模式"
+                         "(不配音,原声保留,只烧中文字幕)")
+            elif subs_segs:
                 genders_by_overlap(subs_segs, whisper.get("segments", []))
                 write_json(ctx.job, OUTPUT, {"duration": whisper.get("duration"),
                                              "segments": subs_segs})

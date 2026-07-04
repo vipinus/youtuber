@@ -122,6 +122,13 @@ def run(ctx: Ctx) -> None:
     data = read_json(ctx.job, INPUT)
     segments = data.get("segments", [])
 
+    if data.get("mode") == "subs_only":
+        # 字幕版(2026-07-04 用户定):无解说片不配音——narration 置空带模式标记,
+        # d5 走原字幕时间轴,d7 保留原声。
+        write_json(ctx.job, OUTPUT, {"segments": [], "mode": "subs_only"})
+        ctx.warn(f"{ctx.slug}: d4_tts 字幕版模式,跳过配音合成")
+        return
+
     narration_dir = ctx.job / NARRATION_DIR
     narration_dir.mkdir(parents=True, exist_ok=True)
 
