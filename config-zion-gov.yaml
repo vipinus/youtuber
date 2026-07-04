@@ -64,7 +64,7 @@ p7:                        # 题材2 自然/野生动物:主供给=官方联邦�
     - "@USGS"                # 地质调查局
     - "@usairforce"          # 空军
     - "@USNavy"              # 海军
-    - "@CDCgov"              # 疾控中心
+    - "@CDC"                 # 疾控中心(实测handle,@CDCgov不存在)
   include_identifiers:       # archive 分支的定点白名单(切回 source:archive 时生效)
     - in-effigy-NPS-documentary  # NPS官方纪录片 1080p/21min,2026-07-03 人工核验PD
   query: 'subject:(wildlife OR "national parks" OR nature OR birds OR fisheries OR conservation) OR title:(wildlife OR wilderness OR "national park" OR salmon OR bird OR refuge OR everglades OR yellowstone)'
