@@ -1215,32 +1215,34 @@ def test_real_ffmpeg_smoke_replace_mode_produces_valid_video_with_looped_bgm(tmp
 
 
 def test_tempo_factors_compress_overlapping_clips():
-    """用户定(2026-07-04):不做逐句变速——MAX_TEMPO=1.0,任何段都不 atempo,
-    超窗靠截尾淡出;语速全片恒定,长度适配靠 d3 字数预算。"""
-    from src.stages.d7_assemble import tempo_factors
+    """用户定(2026-07-04):按角色分块变速——同一角色连续段共用一个速率(块内取
+    最大需求,封顶1.25),块间可不同;字数预算把多数需求压到1.0附近。"""
+    from src.stages.d7_assemble import tempo_factors, MAX_TEMPO
     segs = [
-        {"id": 0, "start": 0.0, "tts_dur": 7.42},   # 超窗:也不变速(截尾兜底在 filter 层)
-        {"id": 1, "start": 4.0, "tts_dur": 3.0},    # 装得下
-        {"id": 2, "start": 10.0, "tts_dur": 5.5},   # 末段轻微超窗:同样不变速
+        {"id": 0, "start": 0.0, "tts_dur": 7.42, "gender": "male"},   # 男声块:需1.93→封顶
+        {"id": 1, "start": 4.0, "tts_dur": 3.0, "gender": "male"},    # 同块跟随同一速率
+        {"id": 2, "start": 10.0, "tts_dur": 4.0, "gender": "female"}, # 女声块:装得下→1.0
     ]
-    assert tempo_factors(segs, video_dur=15.0) == [1.0, 1.0, 1.0]
+    f = tempo_factors(segs, video_dur=15.0)
+    assert f[0] == f[1] == MAX_TEMPO                # 块内一致
+    assert f[2] == 1.0                              # 另一角色不受影响
 
 
 def test_narration_filter_includes_atempo_only_when_needed():
     from src.stages.d7_assemble import build_narration_filter
     segs = [{"id": 0, "start": 0.0, "tts_dur": 7.0},    # 窗口3s→要压
             {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下
+    segs[0]["gender"], segs[1]["gender"] = "male", "female"   # 两个角色两块
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "atempo" not in fc                            # 用户定:任何段都不变速
-    assert "[0:a]atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 超窗→原速截尾+淡出
-    assert "[1:a]adelay=3000|3000[d1]" in fc            # 正常段不带
+    assert "[0:a]atempo=1.2500,atrim=0:2.850,afade=t=out:st=2.650:d=0.2,adelay=0|0[d0]" in fc  # 男块封顶仍超→截尾
+    assert "[1:a]adelay=3000|3000[d1]" in fc            # 女块装得下:原速无处理
 
 
 def test_capped_overlong_clip_is_trimmed_with_fade():
     """压到 MAX_TEMPO 仍超窗的段必须截尾+淡出——绝不双声同放(用户听出叠音)。"""
     from src.stages.d7_assemble import build_narration_filter
-    segs = [{"id": 0, "start": 0.0, "tts_dur": 10.0},   # 窗口2.85s,压1.4后仍7.1s→截
-            {"id": 1, "start": 3.0, "tts_dur": 1.0}]
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 10.0, "gender": "male"},   # 窗口2.85s,封顶仍8s→截
+            {"id": 1, "start": 3.0, "tts_dur": 1.0, "gender": "female"}]  # 另一角色块,不被牵连
     fc = build_narration_filter(segs, video_dur=10.0)
     assert "atrim=0:2.850" in fc and "afade=t=out" in fc
     # 装得下的段不截
@@ -1248,13 +1250,12 @@ def test_capped_overlong_clip_is_trimmed_with_fade():
 
 
 def test_fitting_clip_not_trimmed():
-    """用户定(2026-07-04):不逐句变速。超窗段原速截尾;装得下的段原样不动。"""
+    """块内轻度变速即可装下的段:统一速率、不截尾;另一角色不被牵连。"""
     from src.stages.d7_assemble import build_narration_filter
-    segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3},    # 窗口2.85s,原速超窗→截尾
-            {"id": 1, "start": 3.0, "tts_dur": 1.0}]    # 装得下→不截不变速
+    segs = [{"id": 0, "start": 0.0, "tts_dur": 3.3, "gender": "male"},    # 需1.158<1.25→块速1.1579
+            {"id": 1, "start": 3.0, "tts_dur": 1.0, "gender": "female"}]  # 女块装得下
     fc = build_narration_filter(segs, video_dur=10.0)
-    assert "atempo" not in fc
-    assert "atrim=0:2.850" in fc
+    assert "[0:a]atempo=1.1579,adelay=0|0[d0]" in fc     # 变速后装下:无截尾
     assert "[1:a]adelay=3000|3000[d1]" in fc
 
 

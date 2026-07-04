@@ -72,7 +72,9 @@ def run(ctx: Ctx) -> None:
         # 配音时间轴优先:字幕跟声走(见 _dub_windows)。video_dur 只影响末段窗口,
         # 源片探测失败退化为"末段起点+时长+1s",不炸。
         narr = read_json(ctx.job, "narration.json")
-        segments = [s for s in narr.get("segments", []) if s.get("file")]
+        from src.stages.d7_assemble import enrich_speaker_fields
+        segments = enrich_speaker_fields(
+            [s for s in narr.get("segments", []) if s.get("file")], ctx.job)
         try:
             from src.util.ffprobe import duration_sec
             video_dur = duration_sec(ctx.job / "source.mp4")

@@ -71,7 +71,7 @@ DEFAULT_WATERMARK = "assets/watermark_tr.png"          # P7 T18：跟 d8_meta �
 
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
-MAX_TEMPO = 1.0               # 用户定(2026-07-04):不做逐句变速——每句速度不一致听感差。全片原速,靠 d3 字数预算把译文压进槽位;仍超窗的段截尾+淡出兜底。置 1.0 后 atempo 链自然不出现
+MAX_TEMPO = 1.25              # 按角色分块变速的封顶(用户定 2026-07-04:1.4 密集段听不清;块内统一速率见 _plan)
 
 WM_MIN_SEC = 300.0            # P7 T18：水印切换间隔下限(5min)，config p7.wm_min_sec 覆盖
 WM_MAX_SEC = 600.0            # 水印切换间隔上限(10min)，config p7.wm_max_sec 覆盖
@@ -79,16 +79,53 @@ WM_TR = "TR"                  # 右上角标位
 WM_BR = "BR"                  # 右下角标位(抬高 130px 避开烧字幕区)
 
 
+def _speaker_key(seg: dict) -> str:
+    """"角色"分块键:speaker(未来接分话人) > gender(现有基频检测) > voice。
+    没有真正的说话人分离,同性别连续段近似为同一角色的一段话。"""
+    return str(seg.get("speaker") or seg.get("gender") or seg.get("voice") or "")
+
+
+def enrich_speaker_fields(segments: list[dict], job: Path) -> list[dict]:
+    """旧 narration.json 没有 gender(2026-07-04 前的 d4 产物)——从 zh_script.json
+    按 id 回填,供 _speaker_key 分块。新数据自带 gender,原样返回。"""
+    if any(s.get("gender") or s.get("speaker") for s in segments):
+        return segments
+    try:
+        zh = read_json(job, "zh_script.json").get("segments", [])
+        gmap = {int(x.get("id", -1)): x.get("gender") for x in zh}
+        for s in segments:
+            s["gender"] = gmap.get(int(s.get("id", -1)))
+    except Exception:  # noqa: BLE001 — 回填失败退化为 voice 键分块,不新增故障
+        pass
+    return segments
+
+
 def _plan(segments: list[dict], video_dur: float) -> list[tuple[float, float]]:
-    """逐段算 (atempo 压缩比, 可用窗口秒)。窗口=到下一条旁白开播为止(留间隙)。"""
-    plan: list[tuple[float, float]] = []
+    """逐段算 (atempo 压缩比, 可用窗口秒)。窗口=到下一条旁白开播为止(留间隙)。
+
+    变速规则(用户定 2026-07-04):按角色分块——同一角色的连续段共用一个速率
+    (块内取各段需求的最大值,封顶 MAX_TEMPO),块与块之间可以不同。这样每个人
+    的一段话语速恒定,不出现逐句忽快忽慢;个别段封顶仍装不下→原速截尾兜底
+    (build_narration_filter)。字数预算(d3)先把大多数需求压到 1.0 附近。"""
+    n = len(segments)
+    raws: list[tuple[float, float]] = []
     for i, seg in enumerate(segments):
         start = float(seg.get("start", 0.0))
         dur = float(seg.get("tts_dur", 0.0) or 0.0)
-        next_start = float(segments[i + 1]["start"]) if i + 1 < len(segments) else video_dur
+        next_start = float(segments[i + 1]["start"]) if i + 1 < n else video_dur
         window = max(next_start - start - NARRATION_GAP_SEC, 0.3)
-        f = dur / window if dur > 0 else 1.0
-        plan.append((min(max(f, 1.0), MAX_TEMPO) if f > 1.02 else 1.0, window))
+        raws.append((dur / window if dur > 0 else 1.0, window))
+
+    plan: list[tuple[float, float]] = []
+    i = 0
+    while i < n:
+        j = i
+        while j < n and _speaker_key(segments[j]) == _speaker_key(segments[i]):
+            j += 1
+        block_need = max(need for need, _ in raws[i:j])
+        f = min(max(block_need, 1.0), MAX_TEMPO) if block_need > 1.02 else 1.0
+        plan += [(f, w) for _, w in raws[i:j]]
+        i = j
     return plan
 
 
@@ -370,6 +407,7 @@ def run(ctx: Ctx) -> None:
     bgm_mode = ctx.config.get("p7.bgm", "replace")
 
     segments = read_json(job, NARRATION).get("segments", []) if exists(job, NARRATION) else []
+    segments = enrich_speaker_fields(segments, job)   # 旧数据回填 gender,供角色分块变速
     # 重制场景续(任务#50):配音段文件也会被 d10 裁剪——挨个找回,汇总告警一条(不刷屏)
     _restored: list[str] = []
     for seg in segments:
