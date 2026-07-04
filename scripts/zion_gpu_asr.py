@@ -69,7 +69,13 @@ def transcribe(wav16k: Path, model_name: str = DEFAULT_MODEL) -> dict:
     from faster_whisper import WhisperModel
 
     model = WhisperModel(model_name, device="cuda", compute_type="float16")
-    segments, info = model.transcribe(str(wav16k), vad_filter=True)
+    # 对讲机/无线电对话实战调参(2026-07-04, Artemis天地通话漏抓大量应答):
+    # - min_silence 300ms:恢复句级切分(默认VAD把往返对话吞成22s大段)
+    # - condition_on_previous_text=False:防止在重复性通话里"跳过相似内容"
+    segments, info = model.transcribe(
+        str(wav16k), language="en", vad_filter=True,
+        vad_parameters={"min_silence_duration_ms": 300},
+        condition_on_previous_text=False)
     segs = [
         {"start": round(s.start, 2), "end": round(s.end, 2), "text": s.text.strip()}
         for s in segments if s.text.strip()

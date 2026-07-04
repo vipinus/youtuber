@@ -42,7 +42,7 @@ remote:
   provider: local           # P7 T14：zion 上原生跑管线，本机直接 subprocess 经 wrapper 跑 GPU 脚本，不 ssh/scp
   wrapper: ~/gpu-py         # 先设好 LD_LIBRARY_PATH 再 exec ~/asr-venv/bin/python 的 wrapper(必须经它调用)
   clone_wrapper: ~/clone-py # P7 T17：同上，但指向装了 f5-tts 的 ~/clone-venv(必须经它调用，不能裸跑 venv python)
-  whisper_model: medium.en # 样片档(GPU faster-whisper);production 可切 large-v3
+  whisper_model: large-v3  # 升级(2026-07-04):对讲机/无线电等退化音频 medium.en 漏抓严重
   timeout_sec: 1200        # GPU 任务卡死时中止管线而非无限挂起
   clone_timeout_sec: 7200  # 克隆配音逐段跑完整部片子耗时更长(200段约15-25min)，独立超时上限，不跟转录共用
 video:
