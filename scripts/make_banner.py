@@ -116,7 +116,7 @@ def compose(bg_path: str, brand: str, out_path: str, font_path: str) -> None:
     mountain = extract_mountain("assets/avatar_zh.png")
 
     if brand == "zh":
-        m_h, text = 195, [("尖锋纪录片", 128, 14)]
+        m_h, text = 195, [("发现纪录片", 128, 14)]
     else:
         m_h, text = 185, [("SUMMIT", 118, 26), ("DOCUMENTARIES", 46, 22)]
     m_w = int(mountain.width * m_h / mountain.height)
