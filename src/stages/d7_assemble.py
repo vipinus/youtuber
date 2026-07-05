@@ -430,13 +430,24 @@ def build_assemble_cmd(
     cmd += [
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "[aout]",
+    ]
+    # 双音轨(2026-07-05 用户定:英文原声同轨发布):音轨1=中文配音(默认),
+    # 音轨2=英文原声,语言标签齐全。注意:普通 YouTube/B站上传只播第一轨,
+    # 多语言切换需平台白名单功能;双轨母带先落成片+NAS,平台一开即用,
+    # 本地播放器(VLC等)即刻可切。字幕版(original_audio)本就是原声单轨,不重复。
+    dual = (not original_audio) and narration is not None
+    if dual:
+        cmd += ["-map", "0:a?"]
+    cmd += [
         *video_codec_args, "-pix_fmt", "yuv420p",
         # 音频显式 256k/48kHz(2026-07-05 用户问码率:此前吃 ffmpeg 默认~128k/44.1k;
-        # 提码率消除转码瓶颈,YouTube 二次压制质量更好。配音保真上限在 F5 的 24kHz
-        # 源,码率只保不再损失)
+        # 提码率消除转码瓶颈,YouTube 二次压制质量更好)
         "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
-        "-shortest", str(out_path),
     ]
+    if dual:
+        cmd += ["-metadata:s:a:0", "language=chi", "-metadata:s:a:1", "language=eng",
+                "-disposition:a:0", "default", "-disposition:a:1", "0"]
+    cmd += ["-shortest", str(out_path)]
     return cmd
 
 

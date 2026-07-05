@@ -1385,3 +1385,19 @@ def test_assemble_cmd_subs_only_keeps_original_audio(tmp_path):
     assert "sidechaincompress" not in fc       # 无duck链
     assert str(tmp_path / "nv.mp3") not in cmd # 背景床压根不进输入
     assert "subtitles=" in fc
+
+
+def test_assemble_cmd_embeds_english_original_as_second_track(tmp_path):
+    """双音轨(2026-07-05 用户定):配音版成片带 轨1中文(默认)+轨2英文原声;
+    字幕版本就是原声单轨,不重复添加。"""
+    from src.stages.d7_assemble import build_assemble_cmd
+    cmd = build_assemble_cmd(tmp_path / "s.mp4", tmp_path / "nv.mp3", tmp_path / "narr.wav",
+                             tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5)
+    joined = " ".join(cmd)
+    assert "-map 0:a?" in joined
+    assert "language=chi" in joined and "language=eng" in joined
+    # 字幕版:单轨原声,无第二轨
+    cmd2 = build_assemble_cmd(tmp_path / "s.mp4", tmp_path / "nv.mp3", None,
+                              tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5,
+                              original_audio=True)
+    assert "language=eng" not in " ".join(cmd2)
