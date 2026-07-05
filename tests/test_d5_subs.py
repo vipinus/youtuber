@@ -180,8 +180,8 @@ def test_subs_follow_dub_windows_when_narration_exists(tmp_path, monkeypatch):
     ass = (ctx.job / "subs.ass").read_text(encoding="utf-8")
     dialogue = [l for l in ass.splitlines() if l.startswith("Dialogue:")]
     assert len(dialogue) == 2
-    # 段0:中文4s/原声10s→降速拉满(下限0.8)→5s;字幕跟配音 0-5s,不是原片的10s
-    assert "0:00:05.00" in dialogue[0]
+    # 段0:中文4s(自然语速1.0,不降速);字幕跟配音 0-4s,不是原片的10s
+    assert "0:00:04.00" in dialogue[0]
     assert "0:00:10.00" not in dialogue[0]
-    # 段1:20s 起,8s 中文/10s 原声→0.8降速→10s,字幕 20-30s
-    assert "0:00:20.00" in dialogue[1] and "0:00:30.00" in dialogue[1]
+    # 段1:20s 起,8s 中文→字幕 20-28s
+    assert "0:00:20.00" in dialogue[1] and "0:00:28.00" in dialogue[1]

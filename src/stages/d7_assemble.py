@@ -72,8 +72,9 @@ DEFAULT_WATERMARK = "assets/watermark_tr.png"          # P7 T18：跟 d8_meta �
 
 NARRATION_GAP_SEC = 0.15      # 相邻旁白间留的喘息间隙
 MAX_TEMPO = 1.25              # 提速封顶(用户定:1.4 密集段听不清;段落统一速率见 place_segments)
-TARGET_TEMPO = 0.8            # 目标语速(用户定 2026-07-04:尽量 0.8x,慢而稳的纪录片感;
-                              # 同时天然拉满口型时间)。装不下才加快,封顶 MAX_TEMPO
+TARGET_TEMPO = 1.0           # 目标语速(用户定 2026-07-05:改回 1.0 自然语速)。原 0.8x 会把
+                              # 配音拉长→更容易溢出段落窗口→末句被截。1.0=不降速,只在段落
+                              # 装不下时才加速(封顶 MAX_TEMPO),从源头减少截尾
 
 WM_MIN_SEC = 300.0            # P7 T18：水印切换间隔下限(5min)，config p7.wm_min_sec 覆盖
 WM_MAX_SEC = 600.0            # 水印切换间隔上限(10min)，config p7.wm_max_sec 覆盖
@@ -154,8 +155,8 @@ def place_segments(segments: list[dict], video_dur: float) -> list[dict]:
         speech = sum(float(segments[i].get("tts_dur", 0.0) or 0.0) for i in idxs)
         avail = max(p_end - p_start - SENT_PAUSE_SEC * (m - 1), 0.3)
         fit_need = speech / avail if speech > 0 else 1.0     # 硬约束:段落必须装进窗口
-        # 目标语速策略(用户定):尽量 TARGET_TEMPO(0.8x 纪录片感,同时拉满口型时间);
-        # 段落装不下才按需加快,封顶 MAX_TEMPO,再不够只截末句
+        # 目标语速策略(用户定 2026-07-05):TARGET_TEMPO=1.0 自然语速,不降速(降速拉长
+        # 会溢出窗口截末句);段落装不下才按需加快,封顶 MAX_TEMPO,再不够只截末句
         factor = min(max(fit_need, TARGET_TEMPO), MAX_TEMPO)
 
         durs = [float(segments[i].get("tts_dur", 0.0) or 0.0) / factor for i in idxs]
