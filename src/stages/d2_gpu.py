@@ -98,8 +98,19 @@ def run(ctx: Ctx) -> None:
     data = read_json(ctx.job, OUTPUT)
     segments = data.get("segments", [])
     if not segments:
-        # 0 段 = 源片没有可转录的解说(纯素材/音乐/静音)。绝不能继续——那会产出没有
-        # 中文旁白/字幕的废片甚至上传。拦住，让上层换一部有解说的源片。
+        # 0 段 = 源片没有可转录的解说且无字幕(纯素材/音乐/静音)。绝不能继续——那会
+        # 产出没有中文旁白/字幕的废片甚至上传。拦截前先把该片记入登记表(status=
+        # rejected),否则重跑 d1 会再次选中同一部(白化野牛片真跑踩坑 2026-07-04)。
+        try:
+            from src.util.jobs import read_json as _rj
+            from src.util.registry import append_published
+            ident = _rj(ctx.job, "source.json").get("identifier")
+            if ident:
+                append_published(ctx.root, {"identifier": ident,
+                                            "status": "rejected_no_narration"})
+                ctx.warn(f"{ctx.slug}: 已登记拒片 {ident}(无解说无字幕),重选不会再命中")
+        except Exception:  # noqa: BLE001 — 登记失败不挡拦截主逻辑
+            pass
         raise StageBlocked(
             f"{ctx.slug}: d2_gpu 转录得到 0 段——源片无解说旁白(纯画面/音乐)，"
             f"不适合整片翻译。删掉 source.mp4 用 --force 重跑 d1_source 换片。"

@@ -309,3 +309,35 @@ def test_subs_only_mode_when_whisper_hears_nothing(tmp_path, monkeypatch):
     assert t["mode"] == "subs_only"
     assert len(t["segments"]) == 1
     assert "Columbus" in t["segments"][0]["text"]
+
+
+def test_zero_segments_registers_rejection_before_blocking(tmp_path, monkeypatch):
+    """无解说且无字幕→拦截前登记拒片,重跑 d1 不再选中同一部(白化野牛片踩坑)。"""
+    import pytest
+    from src.config import Config
+    from src.context import Ctx
+    from src.errors import StageBlocked
+    from src.llm import FakeLLM
+    from src.stages import d2_gpu
+    from src.util.jobs import write_json
+    from src.util.registry import published_identifiers
+
+    ctx = Ctx(slug="silent", config=Config({"remote": {"provider": "fake"}}),
+              root=tmp_path / "jobs", llm=FakeLLM())
+    ctx.job.mkdir(parents=True, exist_ok=True)
+    write_json(ctx.job, "source.json", {"identifier": "yt:silentclip"})
+    (ctx.job / "source.mp4").write_bytes(b"MP4")
+
+    class SilentRemote:
+        def transcribe_separate(self, audio, out_dir):
+            write_json(out_dir, "transcript.json", {"duration": 60.0, "segments": []})
+            (out_dir / "no_vocals.mp3").write_bytes(b"N")
+            (out_dir / "vocals.mp3").write_bytes(b"V")
+            return {"transcript": out_dir / "transcript.json",
+                    "no_vocals": out_dir / "no_vocals.mp3", "vocals": out_dir / "vocals.mp3"}
+    monkeypatch.setattr(d2_gpu, "get_remote", lambda cfg: SilentRemote())
+    monkeypatch.setattr(d2_gpu, "_extract_audio", lambda s, o: o.write_bytes(b"A"))
+
+    with pytest.raises(StageBlocked):
+        d2_gpu.run(ctx)
+    assert "yt:silentclip" in published_identifiers(ctx.root)   # 已登记,d1 不再选
