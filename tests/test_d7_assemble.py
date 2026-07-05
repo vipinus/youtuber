@@ -754,7 +754,7 @@ def test_watermark_windows_wm_min_max_sec_knobs_applied():
 def test_build_watermark_filter_multi_window_wires_split_and_both_positions():
     windows = watermark_windows("doc1", 1800.0, wm_min_sec=300.0, wm_max_sec=600.0)
     fc = build_watermark_filter(3, windows)
-    assert "[3:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85,split[wmA][wmB]" in fc
+    assert "[3:v]scale=110:-1,format=rgba,colorchannelmixer=aa=0.85,split[wmA][wmB]" in fc
     assert "[vsub][wmA]overlay=W-w-24:24:enable=" in fc
     assert "[vtr][wmB]overlay=W-w-24:H-h-130:enable=" in fc
     assert fc.endswith("[vout]")
@@ -770,7 +770,7 @@ def test_build_watermark_filter_single_window_skips_split_and_second_overlay():
     assert "split" not in fc
     assert "wmB" not in fc
     assert "H-h-130" not in fc
-    assert "[2:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85[wm]" in fc
+    assert "[2:v]scale=110:-1,format=rgba,colorchannelmixer=aa=0.85[wm]" in fc
     assert "overlay=W-w-24:24:enable='between(t,0.000,200.000)'[vout]" in fc
 
 
@@ -794,7 +794,7 @@ def test_build_assemble_cmd_watermark_wires_overlay_no_narration_variant(tmp_pat
     assert str(wm) in cmd
     assert cmd[cmd.index(str(wm)) - 1] == "-i"
     fc = cmd[cmd.index("-filter_complex") + 1]
-    assert "[2:v]scale=140:-1" in fc                          # wm_idx=2(无旁白：source=0,bg=1)
+    assert "[2:v]scale=110:-1" in fc                          # wm_idx=2(无旁白：source=0,bg=1)
     assert "colorchannelmixer=aa=0.85" in fc
     assert "split[wmA][wmB]" in fc
     assert "overlay=W-w-24:24:enable=" in fc
@@ -817,7 +817,7 @@ def test_build_assemble_cmd_watermark_wires_overlay_narration_variant(tmp_path):
                               video_dur=1800.0, slug="doc1", config=cfg)
     assert cmd.count("-i") == 4                              # source + bg + narration + watermark
     fc = cmd[cmd.index("-filter_complex") + 1]
-    assert "[3:v]scale=140:-1" in fc                          # wm_idx=3(有旁白：source=0,bg=1,narration=2)
+    assert "[3:v]scale=110:-1" in fc                          # wm_idx=3(有旁白：source=0,bg=1,narration=2)
     assert "sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300" in fc
     assert "[bg][2:a]sidechaincompress" in fc                 # 旁白 duck 音频逻辑不受水印影响
     assert "amix=inputs=2:normalize=0" in fc
@@ -942,7 +942,7 @@ def test_run_watermark_enabled_no_narration_computes_duration_and_wires_overlay(
     cmd = calls[0]
     assert str(wm) in cmd
     fc = cmd[cmd.index("-filter_complex") + 1]
-    assert "scale=140:-1" in fc
+    assert "scale=110:-1" in fc
     assert "[vsub]" in fc
     assert not any("水印" in w for w in ctx.warnings)         # 文件齐全，不该有水印相关告警
 
@@ -968,7 +968,7 @@ def test_run_watermark_enabled_missing_file_warns_and_skips_overlay(tmp_path, mo
     cmd = calls[0]
     assert str(missing) not in cmd
     fc = cmd[cmd.index("-filter_complex") + 1]
-    assert "scale=140" not in fc
+    assert "scale=110" not in fc
     assert any("水印" in w and "缺失" in w for w in ctx.warnings)
     assert (ctx.job / OUTPUT).exists()                        # 没中止，照样出片
 
@@ -993,7 +993,7 @@ def test_run_watermark_disabled_by_default_in_test_helper_matches_old_behavior(t
     run(ctx)
 
     fc = calls[0][calls[0].index("-filter_complex") + 1]
-    assert "scale=140" not in fc
+    assert "scale=110" not in fc
     assert DEFAULT_WATERMARK not in "".join(calls[0])
 
 

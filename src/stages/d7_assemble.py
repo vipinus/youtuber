@@ -38,7 +38,7 @@ P7 T18：`p7.video_watermark`(默认开)把频道台标(`p7.watermark`，跟 d8 
 `p7.wm_min_sec`~`p7.wm_max_sec`(默认 5~10min)随机间隔切换，从右上开始。切换点
 由 slug 的 crc32 派生一个确定性 LCG 生成(`watermark_windows`，跟 pick_bgm_track
 选曲同一"不用 random/时间戳"的思路)——同 slug 重跑窗口/位置序列完全一致。水印
-输入缩到 140px 宽、转 rgba、调 85% 不透明度，叠在字幕烧完的画面上；BR 位
+输入缩到 110px 宽(可配 p7.watermark_width)、转 rgba、调 85% 不透明度，叠在字幕烧完的画面上；BR 位
 `H-h-130` 特意抬高，避开烧字幕常驻的底部约 120px 区域，不挡字。视频短于
 `wm_min_sec`(整部片子不够切一次)时天然只出一个覆盖全片的 TR 窗口，只叠一路，
 省一次 split/overlay。开关关闭、或水印文件缺失/读不到 → 按老逻辑拼命令(无水印
@@ -326,16 +326,17 @@ def _watermark_enable_expr(windows: list[tuple[float, float, str]], position: st
     return "+".join(f"between(t,{a:.3f},{b:.3f})" for a, b, p in windows if p == position)
 
 
-def build_watermark_filter(wm_idx: int, windows: list[tuple[float, float, str]]) -> str:
+def build_watermark_filter(wm_idx: int, windows: list[tuple[float, float, str]],
+                           wm_width: int = 110) -> str:
     """拼水印叠加的 filter_complex 片段，接在已烧好字幕的 `[vsub]` 后面产出
-    `[vout]`：水印输入缩到 140px 宽、转 rgba、调到 85% 不透明度；TR 叠
+    `[vout]`：水印输入缩到 110px 宽(可配 p7.watermark_width)、转 rgba、调到 85% 不透明度；TR 叠
     `overlay=W-w-24:24`，BR 叠 `overlay=W-w-24:H-h-130`(抬高 130px 避开烧字幕
     常驻的底部区域，不挡字)。只有一个窗口(短视频不够切换一次)时只叠对应那一路，
     省一次 split/overlay；两路都有窗口时 split 成 wmA(右上)/wmB(右下)分别叠加，
     先叠 TR 再叠 BR，最终汇到 `[vout]`。"""
     tr_expr = _watermark_enable_expr(windows, WM_TR)
     br_expr = _watermark_enable_expr(windows, WM_BR)
-    scale = f"[{wm_idx}:v]scale=140:-1,format=rgba,colorchannelmixer=aa=0.85"
+    scale = f"[{wm_idx}:v]scale={wm_width}:-1,format=rgba,colorchannelmixer=aa=0.85"
     if tr_expr and br_expr:
         return (
             f"{scale},split[wmA][wmB];"
@@ -418,7 +419,9 @@ def build_assemble_cmd(
             slug, video_dur,
             config.get("p7.wm_min_sec", WM_MIN_SEC), config.get("p7.wm_max_sec", WM_MAX_SEC),
         )
-        video_fc = f"[0:v]subtitles='{subs_esc}'[vsub];" + build_watermark_filter(wm_idx, windows)
+        wm_width = int(config.get("p7.watermark_width", 110)) if config is not None else 110
+        video_fc = (f"[0:v]subtitles='{subs_esc}'[vsub];"
+                    + build_watermark_filter(wm_idx, windows, wm_width))
     else:
         video_fc = f"[0:v]subtitles='{subs_esc}'[vout]"
 
