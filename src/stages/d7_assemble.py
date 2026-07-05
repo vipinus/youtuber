@@ -430,7 +430,11 @@ def build_assemble_cmd(
     cmd += [
         "-filter_complex", fc,
         "-map", "[vout]", "-map", "[aout]",
-        *video_codec_args, "-pix_fmt", "yuv420p", "-c:a", "aac",
+        *video_codec_args, "-pix_fmt", "yuv420p",
+        # 音频显式 256k/48kHz(2026-07-05 用户问码率:此前吃 ffmpeg 默认~128k/44.1k;
+        # 提码率消除转码瓶颈,YouTube 二次压制质量更好。配音保真上限在 F5 的 24kHz
+        # 源,码率只保不再损失)
+        "-c:a", "aac", "-b:a", "256k", "-ar", "48000",
         "-shortest", str(out_path),
     ]
     return cmd
