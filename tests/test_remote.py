@@ -726,3 +726,20 @@ def test_get_remote_local_custom_wrapper_and_model():
     assert remote.wrapper == str(Path("~/other-gpu-py").expanduser())
     assert remote.whisper_model == "large-v3"
     assert remote.timeout_sec == 42
+
+
+def test_get_remote_local_dispatches_cosyvoice_script(tmp_path):
+    """tts.provider=cosyvoice(2026-07-05 A/B胜出)→ LocalGPU 换 cosy wrapper+脚本。"""
+    from src.config import Config
+    from src.remote import LocalGPU, get_remote
+
+    r = get_remote(Config({"remote": {"provider": "local"},
+                           "tts": {"provider": "cosyvoice"}}))
+    assert isinstance(r, LocalGPU)
+    assert r.clone_script == "zion_cosy_tts.py"
+    assert r.clone_wrapper.endswith("cosy-py")
+
+    r2 = get_remote(Config({"remote": {"provider": "local"},
+                            "tts": {"provider": "clone"}}))
+    assert r2.clone_script == "zion_clone_tts.py"
+    assert r2.clone_wrapper.endswith("clone-py")

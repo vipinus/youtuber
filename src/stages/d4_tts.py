@@ -132,7 +132,9 @@ def run(ctx: Ctx) -> None:
     narration_dir = ctx.job / NARRATION_DIR
     narration_dir.mkdir(parents=True, exist_ok=True)
 
-    if ctx.config.get("tts.provider", "edge") == "clone":
+    if ctx.config.get("tts.provider", "edge") in ("clone", "cosyvoice"):
+        # cosyvoice(2026-07-05 A/B胜出)与 clone(F5) 共用同一克隆编排流,
+        # 引擎分派在 remote 层(脚本名/venv wrapper 按 tts.provider 选)
         _run_clone(ctx, segments, narration_dir)
         return
 

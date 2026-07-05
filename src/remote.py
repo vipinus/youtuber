@@ -45,6 +45,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _ZION_SCRIPT_NAME = "zion_gpu_asr.py"
 _ZION_SDXL_SCRIPT_NAME = "zion_sdxl.py"
 _ZION_CLONE_SCRIPT_NAME = "zion_clone_tts.py"
+_ZION_COSY_SCRIPT_NAME = "zion_cosy_tts.py"    # tts.provider=cosyvoice(2026-07-05 A/B胜出)
 
 
 def _run_checked(
@@ -318,9 +319,11 @@ class LocalGPU:
         timeout_sec: int = 1200,
         clone_timeout_sec: int = 7200,
         repo_root: Path | None = None,
+        clone_script: str = _ZION_CLONE_SCRIPT_NAME,
     ):
         self.wrapper = str(Path(wrapper).expanduser())
-        self.clone_wrapper = str(Path(clone_wrapper).expanduser())  # P7 T17：clone-venv 的 wrapper
+        self.clone_wrapper = str(Path(clone_wrapper).expanduser())  # 克隆引擎 venv 的 wrapper
+        self.clone_script = clone_script       # zion_clone_tts.py(F5) | zion_cosy_tts.py(CosyVoice2)
         self.whisper_model = whisper_model
         self.timeout_sec = timeout_sec        # 同 SSHRemoteGPU：GPU 任务卡死不能无限挂住管线
         self.clone_timeout_sec = clone_timeout_sec  # 克隆配音逐段推理耗时更长(200段约15-25min)，独立超时上限
@@ -362,7 +365,7 @@ class LocalGPU:
         """本机经 `~/clone-py` 跑 scripts/zion_clone_tts.py：脚本直接把
         n{id:03d}.wav 写进 out_dir（同一份文件系统，不需要再搬一次）。"""
         out_dir.mkdir(parents=True, exist_ok=True)
-        script = self.repo_root / "scripts" / _ZION_CLONE_SCRIPT_NAME
+        script = self.repo_root / "scripts" / self.clone_script
         cmd = [self.clone_wrapper, str(script), str(zh_script), str(vocals), str(out_dir)]
         _run_checked(
             cmd, self.clone_timeout_sec,
@@ -389,11 +392,14 @@ def get_remote(config: Config) -> RemoteGPU:
             clone_timeout_sec=config.get("remote.clone_timeout_sec", 7200),
         )
     if provider == "local":
+        cosy = config.get("tts.provider") == "cosyvoice"
         return LocalGPU(
             wrapper=config.get("remote.wrapper", "~/gpu-py"),
             whisper_model=config.get("remote.whisper_model", "medium.en"),
             timeout_sec=config.get("remote.timeout_sec", 1200),
-            clone_wrapper=config.get("remote.clone_wrapper", "~/clone-py"),
+            clone_wrapper=(config.get("remote.cosy_wrapper", "~/cosy-py") if cosy
+                           else config.get("remote.clone_wrapper", "~/clone-py")),
+            clone_script=(_ZION_COSY_SCRIPT_NAME if cosy else _ZION_CLONE_SCRIPT_NAME),
             clone_timeout_sec=config.get("remote.clone_timeout_sec", 7200),
         )
     raise ValueError(f"未知 remote provider: {provider}")
