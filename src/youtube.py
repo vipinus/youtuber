@@ -15,6 +15,7 @@ SCOPES = ["https://www.googleapis.com/auth/youtube"]
 class Uploader(Protocol):
     def upload(self, video: Path, meta: dict, thumb: Path, visibility: str) -> dict: ...
     def add_to_playlist(self, video_id: str, playlist_title: str) -> str: ...
+    def update_description(self, video_id: str, description: str) -> None: ...
 
 
 class FakeUploader:
@@ -22,6 +23,7 @@ class FakeUploader:
 
     def __init__(self):
         self.playlist_calls: list[tuple[str, str]] = []
+        self.description_updates: list[tuple[str, str]] = []
 
     def upload(self, video: Path, meta: dict, thumb: Path, visibility: str) -> dict:
         return {"videoId": "FAKE12345", "url": "https://youtu.be/FAKE12345",
@@ -30,6 +32,9 @@ class FakeUploader:
     def add_to_playlist(self, video_id: str, playlist_title: str) -> str:
         self.playlist_calls.append((video_id, playlist_title))
         return "FAKEPL123"
+
+    def update_description(self, video_id: str, description: str) -> None:
+        self.description_updates.append((video_id, description))
 
 
 def load_creds(token: str, client_secret: str, scopes=SCOPES):
@@ -97,6 +102,23 @@ class YouTubeUploader:
                                "resourceId": {"kind": "youtube#video", "videoId": video_id}}},
         ).execute()
         return playlist_id
+
+    def update_description(self, video_id: str, description: str) -> None:
+        """改视频简介(互链回填用):update 要求 snippet 带 title+categoryId,
+        先 list 取现有 snippet 再改 description,避免把标题/分类冲掉。"""
+        resp = self._yt.videos().list(part="snippet", id=video_id).execute()
+        items = resp.get("items", [])
+        if not items:
+            return
+        snip = items[0]["snippet"]
+        snip["description"] = description
+        self._yt.videos().update(
+            part="snippet",
+            body={"id": video_id, "snippet": {
+                "title": snip.get("title", ""), "description": description,
+                "categoryId": snip.get("categoryId", "22"),
+                "tags": snip.get("tags", [])}},
+        ).execute()
 
     def _find_playlist(self, title: str) -> str | None:
         """在自己的播放列表里按标题精确匹配（翻页找全，别漏了 50 个之后的）。"""
