@@ -377,30 +377,3 @@ def test_build_meta_uses_watch_url_for_youtube_gov_source():
     assert "https://www.youtube.com/watch?v=abc123" in meta["description"]
     assert "archive.org" not in meta["description"]
 
-
-def test_crosslink_english_desc_has_zh_and_zh_video_backfilled(tmp_path, monkeypatch):
-    """互链(2026-07-06 用户定):英文简介带中文配音版链接;英文发完回填英文链接
-    到中文视频简介。"""
-    instances, calls = _capture_fake_uploader(monkeypatch)
-    ctx = _ctx(tmp_path, Config({"youtube_en": {"enabled": True, "provider": "fake"},
-                                 "youtube": {"provider": "fake"}}))
-    # 中文版已发布(d9 在前)
-    write_json(ctx.job, "publish.json", {"videoId": "ZHVID123", "url": "https://youtu.be/ZHVID123"})
-    write_json(ctx.job, "meta.json", {"title": "中文标题", "description": "中文简介正文"})
-
-    # 记录中文频道 uploader 的 update_description 调用
-    import src.youtube as ym
-    updates: list = []
-    monkeypatch.setattr(ym.FakeUploader, "update_description",
-                        lambda self, vid, desc: updates.append((vid, desc)))
-
-    run(ctx)
-
-    # 英文简介含中文链接
-    assert "https://youtu.be/ZHVID123" in calls["meta"]["description"]
-    # 中文视频被回填英文链接
-    assert updates and updates[0][0] == "ZHVID123"
-    assert "https://youtu.be/FAKE12345" in updates[0][1]     # 英文视频URL
-    assert "中文简介正文" in updates[0][1]                   # 保留原简介
-    out = read_json(ctx.job, OUTPUT)
-    assert out["crosslink_zh"] == "https://youtu.be/ZHVID123"

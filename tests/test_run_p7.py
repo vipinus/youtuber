@@ -34,12 +34,12 @@ def test_stages_for_resolves_original_and_doc():
     assert run_mod._stages_for("doc") is run_mod.STAGES_P7
 
 
-def test_stages_p7_includes_d10_archive_right_after_d9b_bilibili():
-    """P7 T15/T19/T20：d9_publish(YouTube) → d9b_bilibili(B 站追加发布) →
-    d9c_publish_en(英文原片追加发布到第二账号) → d10_archive(归档，最后一站)，
-    好让归档把 publish_bilibili.json / publish_en.json 也搬走。"""
+def test_stages_p7_publish_order_en_first_then_zh_then_crosslink():
+    """用户定(2026-07-06):英文原版先发 → 中文配音版后发 → B站 → d9d 双向互链
+    → d10 归档(最后一站,把各 publish*.json/crosslink.json 一并搬走)。"""
     names = [s[0] for s in run_mod.STAGES_P7]
-    assert names[-4:] == ["d9_publish", "d9b_bilibili", "d9c_publish_en", "d10_archive"]
+    assert names[-5:] == ["d9c_publish_en", "d9_publish", "d9b_bilibili",
+                          "d9d_crosslink", "d10_archive"]
 
 
 def test_stages_for_rejects_unknown_pipeline_name():

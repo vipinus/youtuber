@@ -214,34 +214,6 @@ def _build_meta(source: dict) -> dict:
     return {"title": title, "description": description, "tags": list(_DEFAULT_TAGS)}
 
 
-def _zh_publish(ctx) -> dict:
-    """中文配音版的发布结果(publish.json,d9 先于 d9c 跑,此时已存在)。缺失返回 {}。"""
-    if (ctx.job / "publish.json").exists():
-        try:
-            return read_json(ctx.job, "publish.json")
-        except Exception:  # noqa: BLE001
-            return {}
-    return {}
-
-
-def _crosslink_back_to_zh(ctx, en_url: str, zh_pub: dict) -> None:
-    """英文发完,回头把英文链接追加到中文视频简介(双向互链的后半程)。
-    best-effort:主频道 provider=fake/未授权/API 失败都只 warn,不动已成功的发布。"""
-    zh_vid = zh_pub.get("videoId")
-    if not zh_vid or not en_url:
-        return
-    try:
-        from src.youtube import get_uploader
-        zh_up = get_uploader(ctx.config)
-        base = read_json(ctx.job, "meta.json").get("description", "") if (ctx.job / "meta.json").exists() else ""
-        line = f"\n\n🎬 English original / 英文原版：{en_url}"
-        if en_url not in base:
-            zh_up.update_description(zh_vid, base + line)
-            ctx.warn(f"{ctx.slug}: 已把英文链接回填到中文视频简介")
-    except Exception as e:  # noqa: BLE001 — 互链回填失败不作废发布
-        ctx.warn(f"{ctx.slug}: 回填中文简介失败({type(e).__name__}: {e})")
-
-
 def run(ctx: Ctx) -> None:
     if not ctx.config.get("youtube_en.enabled", False):
         write_json(ctx.job, OUTPUT, {"status": "disabled"})
@@ -263,12 +235,6 @@ def run(ctx: Ctx) -> None:
     try:
         source = read_json(ctx.job, INPUT)
         meta = _build_meta(source)
-        # 互链前半程:中文版已发(d9 在前),英文简介带中文配音版链接
-        zh_pub = _zh_publish(ctx)
-        zh_url = zh_pub.get("url") or (
-            f"https://youtu.be/{zh_pub['videoId']}" if zh_pub.get("videoId") else "")
-        if zh_url:
-            meta["description"] += f"\n\n🎬 中文配音版 / Chinese dubbed version：{zh_url}"
         uploader = _uploader_for(ctx.config)
         video = ctx.job / "source.mp4"                # 英文原声原片，非中文配音的 video.mp4
         from src.util.restore import restore_from_archive
@@ -309,11 +275,6 @@ def run(ctx: Ctx) -> None:
     if clean_built is not None:
         result["replaced_bgm"] = True
         clean_built.unlink(missing_ok=True)   # 可再生的临时产物(NAS 有 source+vocals),传完即清
-
-    # 互链后半程:把英文链接回填到中文视频简介(best-effort,失败不作废本次发布)
-    _crosslink_back_to_zh(ctx, result.get("url", ""), zh_pub)
-    if zh_url:
-        result["crosslink_zh"] = zh_url
 
     playlist_title = ctx.config.get("youtube_en.playlist", "")
     if playlist_title:

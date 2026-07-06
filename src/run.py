@@ -18,6 +18,7 @@ from src.stages import (
     d8_meta,
     d9b_bilibili,
     d9c_publish_en,
+    d9d_crosslink,
     d10_archive,
     s1_topic,
     s2_research,
@@ -66,9 +67,12 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d5_subs", d5_subs.run, d5_subs.OUTPUT),
     ("d7_assemble", d7_assemble.run, d7_assemble.OUTPUT),
     ("d8_meta", d8_meta.run, d8_meta.OUTPUT),
+    # 用户定(2026-07-06):英文原版先发,中文配音版后发。d9c(best-effort,英文)
+    # 在前;d9_publish(主发布,中文)在后。互链 d9d 独立最后一步,顺序无关。
+    ("d9c_publish_en", d9c_publish_en.run, d9c_publish_en.OUTPUT),
     ("d9_publish", s9_publish.run, s9_publish.OUTPUT),
     ("d9b_bilibili", d9b_bilibili.run, d9b_bilibili.OUTPUT),
-    ("d9c_publish_en", d9c_publish_en.run, d9c_publish_en.OUTPUT),
+    ("d9d_crosslink", d9d_crosslink.run, d9d_crosslink.OUTPUT),
     ("d10_archive", d10_archive.run, d10_archive.OUTPUT),
 ]
 
