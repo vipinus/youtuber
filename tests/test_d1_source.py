@@ -721,3 +721,40 @@ def test_youtube_gov_pin_ids_force_to_front(monkeypatch, tmp_path):
     src = read_json(ctx.job, d1_source.META_OUTPUT)
     assert downloaded[0] == "ep2"          # 定点视频先下,越过点赞更高的 hot
     assert src["identifier"] == "yt:ep2"
+
+
+def test_pin_rejects_non_whitelisted_channel(monkeypatch, tmp_path):
+    """许可门(不可松):定点视频来自非白名单频道(同名山寨号)必须拒——否则
+    PD 署名是假的。"""
+    from src.stages import d1_source
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: [])
+    monkeypatch.setattr(d1_source, "_yt_fetch_entry", lambda b, v: {
+        "id": v, "title": "NASA Moon Base FAKE", "duration": 2900,
+        "uploader_id": "@SpaceSPANfake", "channel": "Space SPAN"})
+    dl = []
+    monkeypatch.setattr(d1_source, "_yt_download", lambda b, vid, d, mh, mb: dl.append(vid))
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NASA"],
+                              "yt_pin_ids": ["fakevid"]})
+    try:
+        d1_source.run(ctx)
+    except Exception:
+        pass
+    assert dl == []                              # 山寨号视频不下载
+    assert any("不在白名单" in w for w in ctx.warnings)
+
+
+def test_pin_accepts_whitelisted_channel(monkeypatch, tmp_path):
+    """白名单频道的定点视频正常收(uploader_id 匹配)。"""
+    from src.stages import d1_source
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: [])
+    monkeypatch.setattr(d1_source, "_yt_fetch_entry", lambda b, v: {
+        "id": v, "title": "NASA Moon Base Update Documentary", "duration": 2900,
+        "uploader_id": "@NASA", "channel": "NASA"})
+    monkeypatch.setattr(d1_source, "_yt_download", lambda b, vid, dest, mh, mb: dest.write_bytes(b"MP4"))
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NASA"],
+                              "yt_pin_ids": ["realvid"]})
+    d1_source.run(ctx)
+    from src.util.jobs import read_json
+    assert read_json(ctx.job, d1_source.META_OUTPUT)["identifier"] == "yt:realvid"

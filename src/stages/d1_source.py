@@ -213,6 +213,7 @@ def _yt_fetch_entry(ytdlp: str, video_id: str) -> dict:
     d = json.loads(out.stdout)
     return {"id": d.get("id"), "title": d.get("title"), "duration": d.get("duration"),
             "channel": d.get("channel") or d.get("uploader"),
+            "uploader_id": d.get("uploader_id"), "channel_id": d.get("channel_id"),
             "view_count": d.get("view_count"), "like_count": d.get("like_count"),
             "live_status": d.get("live_status")}
 
@@ -356,7 +357,14 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             else:
                 try:
                     ent = _yt_fetch_entry(ytdlp, vid)
-                    if min_sec <= float(ent.get("duration") or 0) <= max_sec:
+                    # 许可门(不可松):定点视频也必须来自白名单联邦频道,否则 PD 署名
+                    # 就是假的(同名山寨号一堆)。uploader_id(@handle)对白名单校验。
+                    up = str(ent.get("uploader_id") or "").lstrip("@").lower()
+                    wl = {c.lstrip("@").lower() for c in channels}
+                    if up not in wl:
+                        ctx.warn(f"d1_source: 定点 {vid} 来源频道 @{up} 不在白名单，"
+                                 "拒绝(非联邦官方=非法定PD)")
+                    elif min_sec <= float(ent.get("duration") or 0) <= max_sec:
                         pinned.append((ent, ent.get("channel") or "pin"))
                     else:
                         ctx.warn(f"d1_source: 定点 {vid} 时长超范围，跳过")
