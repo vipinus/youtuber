@@ -204,6 +204,19 @@ def _yt_list_channel(ytdlp: str, channel: str, limit: int) -> list[dict]:
     return [e for e in (data.get("entries") or []) if e]
 
 
+def _yt_fetch_entry(ytdlp: str, video_id: str) -> dict:
+    """按 id 抓单个视频的选片元数据(定点指定用,视频可能超出频道列表深度)。"""
+    import subprocess
+    out = subprocess.run(
+        [ytdlp, "-J", "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+        capture_output=True, text=True, timeout=120, check=True)
+    d = json.loads(out.stdout)
+    return {"id": d.get("id"), "title": d.get("title"), "duration": d.get("duration"),
+            "channel": d.get("channel") or d.get("uploader"),
+            "view_count": d.get("view_count"), "like_count": d.get("like_count"),
+            "live_status": d.get("live_status")}
+
+
 def _yt_video_stats(ytdlp: str, video_id: str) -> tuple[int, int]:
     """单条视频 (播放量, 点赞数)。频道扁平列表两者恒为空(实测 2026-07-03),
     只能逐条 --print,不下载。任一取不到记 0。"""
@@ -327,6 +340,29 @@ def _run_youtube_gov(ctx: Ctx) -> None:
     # 用户定(2026-07-04):好评(点赞)优先,播放量次之
     survivors.sort(key=lambda t: (t[0].get("like_count") or 0, t[0].get("view_count") or 0),
                    reverse=True)
+
+    # 定点指定(p7.yt_pin_ids):人工点名的视频强制排队首(如系列片续集),仍过
+    # 去重/时长门;不在频道列表里(超出 rows 深度)则直接按 id 抓元数据补进来。
+    pins = [str(v) for v in (cfg.get("p7.yt_pin_ids", []) or [])]
+    if pins:
+        by_id = {e.get("id"): (e, ch) for e, ch in survivors}
+        pinned: list[tuple[dict, str]] = []
+        for vid in pins:
+            if f"yt:{vid}" in skip_ids:
+                ctx.warn(f"d1_source: 定点 {vid} 已发布/在途，跳过")
+                continue
+            if vid in by_id:
+                pinned.append(by_id.pop(vid))
+            else:
+                try:
+                    ent = _yt_fetch_entry(ytdlp, vid)
+                    if min_sec <= float(ent.get("duration") or 0) <= max_sec:
+                        pinned.append((ent, ent.get("channel") or "pin"))
+                    else:
+                        ctx.warn(f"d1_source: 定点 {vid} 时长超范围，跳过")
+                except Exception as ex:  # noqa: BLE001
+                    ctx.warn(f"d1_source: 定点 {vid} 抓取失败({type(ex).__name__})，跳过")
+        survivors = pinned + [t for t in survivors if t[0].get("id") in by_id]
 
     for e, channel in survivors:
         vid = e["id"]

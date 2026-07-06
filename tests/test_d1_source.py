@@ -695,3 +695,29 @@ def test_youtube_gov_excludes_live_replays(monkeypatch, tmp_path):
     from src.util.jobs import read_json
     src = read_json(ctx.job, d1_source.META_OUTPUT)
     assert src["identifier"] == "yt:ok"    # was_live 与标题 LIVE 的高流量片都被拒
+
+
+def test_youtube_gov_pin_ids_force_to_front(monkeypatch, tmp_path):
+    """定点指定(p7.yt_pin_ids):点名视频强制排队首,越过点赞排序,仍过时长/去重门。"""
+    from src.stages import d1_source
+    entries = [
+        {"id": "hot", "title": "Popular Doc Documentary", "duration": 900, "view_count": 9_000_000},
+        {"id": "ep2", "title": "Moonbound Episode 2 Documentary", "duration": 2160, "view_count": 100},
+    ]
+    downloaded = []
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    monkeypatch.setattr(d1_source, "_yt_video_stats", lambda b, v: (0, 0))
+    def fake_dl(b, vid, dest, mh, mb):
+        downloaded.append(vid); dest.write_bytes(b"MP4")
+    monkeypatch.setattr(d1_source, "_yt_download", fake_dl)
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NASA"],
+                              "yt_pin_ids": ["ep2"]})
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    src = read_json(ctx.job, d1_source.META_OUTPUT)
+    assert downloaded[0] == "ep2"          # 定点视频先下,越过点赞更高的 hot
+    assert src["identifier"] == "yt:ep2"
