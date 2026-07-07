@@ -20,6 +20,18 @@ _MAX_SENT_SEC = 30.0     # 无标点长流保险:超过就硬断句,别让一段
 _MAX_SENT_CHARS = 220
 
 
+# 音效/非语音描述词(用户定 2026-07-07:字幕不要音效词)。字幕里的 [music]/[音乐]/
+# [applause]/[掌声]/[background noise]/[laughs]…全在方括号 []/【】里;♪♫ 是配乐符;
+# >> 是换人标记。圆括号 ()（）是缩写/补充(CNEOS/DART),保留不动。
+_SOUND_FX = re.compile(r"\[[^\]]*\]|【[^】]*】|[♪♫]|>>+\s*")
+
+
+def strip_sound_effects(text: str) -> str:
+    """去掉字幕里的音效描述词(方括号类)+配乐符+换人标记,保留圆括号缩写。
+    在字幕解析源头剥,不进翻译/配音/显示。"""
+    return re.sub(r"\s+", " ", _SOUND_FX.sub(" ", text)).strip()
+
+
 def _events(path: Path) -> list[tuple[float, float, str]]:
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     rows: list[tuple[float, float, str]] = []
@@ -28,7 +40,8 @@ def _events(path: Path) -> list[tuple[float, float, str]]:
         if not segs:
             continue
         text = "".join(s.get("utf8", "") for s in segs).replace("\n", " ").strip()
-        if not text:
+        text = strip_sound_effects(text)     # 音效词在源头剥掉
+        if not text:                          # 整条就是音效词(如 "[music]")→ 丢弃
             continue
         t0 = float(e.get("tStartMs", 0)) / 1000.0
         dur = float(e.get("dDurationMs", 0)) / 1000.0

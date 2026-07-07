@@ -91,11 +91,13 @@ def run(ctx: Ctx) -> None:
 
     budgets = char_budgets(segments, duration,
                            float(ctx.config.get("p7.zh_chars_per_sec", ZH_CHARS_PER_SEC)))
+    from src.util.ytsubs import strip_sound_effects
     indexed = list(enumerate(segments))
     zh_map: dict[int, str] = {}
     for start in range(0, len(indexed), CHUNK_SIZE):
         chunk = indexed[start : start + CHUNK_SIZE]
-        batch = [(i, seg.get("text", ""), budgets[i]) for i, seg in chunk]
+        # 音效词剥一遍再翻译(2026-07-07 用户定:覆盖 whisper 路径,平台字幕已在 ytsubs 剥过)
+        batch = [(i, strip_sound_effects(seg.get("text", "")), budgets[i]) for i, seg in chunk]
         zh_map.update(_translate_batch(ctx, batch))
 
     # 超预算段(>1.3x)定向返工一轮:更严的措辞逼 LLM 压缩;返工仍超就交给 d7 的
@@ -113,16 +115,21 @@ def run(ctx: Ctx) -> None:
     out_segments = []
     missing = 0
     for i, seg in indexed:
+        en_clean = strip_sound_effects(seg.get("text", ""))   # en 存干净版(引用文本/兜底)
         zh = zh_map.get(i)
         if zh is None:
-            zh = seg.get("text", "")  # 回退：保留英文原文，不留空、不错位、不崩
+            zh = en_clean  # 回退：保留英文原文(已剥音效词)，不留空、不错位、不崩
             missing += 1
+        else:
+            zh = strip_sound_effects(zh)   # LLM 若保留了方括号,再剥一遍
+        if not zh.strip():                 # 剥完空了(整段就是音效词)→ 跳过,不发空段
+            continue
         out_segments.append(
             {
                 "id": i,
                 "start": seg.get("start"),
                 "end": seg.get("end"),
-                "en": seg.get("text", ""),
+                "en": en_clean,
                 "zh": zh,
                 # P7 T9：透传 d2_gpu(zion 侧基频估计)写入的说话人性别，供 d4_tts
                 # 挑男/女声。转录段没有该字段(旧数据/检测失败)时落 None——绝不

@@ -35,3 +35,27 @@ def test_gender_overlap_mapping(tmp_path):
     genders_by_overlap(subs, whisper)
     assert subs[0]["gender"] == "female"     # 重叠命中
     assert subs[1]["gender"] is None         # 无重叠不瞎猜
+
+
+def test_strip_sound_effects_removes_brackets_keeps_parens():
+    """用户定(2026-07-07):去音效词——方括号[]/【】+♪+>>去掉,圆括号缩写保留。"""
+    from src.util.ytsubs import strip_sound_effects
+    assert strip_sound_effects("[music] Hello [applause] world") == "Hello world"
+    assert strip_sound_effects("【音乐】大家好【掌声】") == "大家好"
+    assert strip_sound_effects("♪ la la ♪ speech") == "la la speech"
+    assert strip_sound_effects(">> Speaker: hi") == "Speaker: hi"
+    assert strip_sound_effects("[music]") == ""                      # 纯音效→空
+    assert strip_sound_effects("近地天体(CNEOS)监测") == "近地天体(CNEOS)监测"  # 圆括号缩写保留
+
+
+def test_parse_json3_drops_pure_sfx_lines(tmp_path):
+    import json
+    p = tmp_path / "s.json3"
+    p.write_text(json.dumps({"events": [
+        {"tStartMs": 1000, "dDurationMs": 2000, "segs": [{"utf8": "[Music]"}]},
+        {"tStartMs": 3000, "dDurationMs": 2000, "segs": [{"utf8": "Real speech here."}]},
+    ]}), encoding="utf-8")
+    from src.util.ytsubs import parse_json3_segments
+    segs = parse_json3_segments(p)
+    joined = " ".join(s["text"] for s in segs)
+    assert "Music" not in joined and "Real speech here." in joined
