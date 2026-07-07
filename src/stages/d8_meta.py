@@ -227,6 +227,15 @@ def run(ctx: Ctx) -> None:
     zh_script = read_json(ctx.job, INPUT)
     source = read_json(ctx.job, SOURCE_INPUT) if exists(ctx.job, SOURCE_INPUT) else {}
 
+    # 空片守卫(2026-07-07 真跑踩坑:d2 被跳过用了陈旧 0 段转录,出了没配音没字幕的
+    # 废片还发布)。配音版(非 subs_only)却 0 段脚本 = 转录/翻译坏了或状态陈旧,在
+    # 发布前一步拦住,绝不让废片进 d9。字幕版天然 0 旁白但有字幕,不拦。
+    if not zh_script.get("segments") and zh_script.get("mode") != "subs_only":
+        from src.errors import StageBlocked
+        raise StageBlocked(
+            f"{ctx.slug}: d8_meta 中文脚本 0 段(转录/翻译为空或陈旧),不出片。"
+            "删 transcript.json/zh_script.json/narration.json 用 --force 从 d2 重跑。")
+
     meta = extract_json(ctx.llm.generate(SYSTEM, build_prompt(zh_script, source)))
 
     attrib = _attribution_line(source)

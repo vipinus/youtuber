@@ -1419,3 +1419,4 @@ def test_assemble_cmd_no_duck_keeps_music_constant(tmp_path):
     cmd2 = build_assemble_cmd(tmp_path/"s.mp4", tmp_path/"nv.mp3", tmp_path/"narr.wav",
                               tmp_path/"subs.ass", tmp_path/"out.mp4", 0.5, duck_bg=True)
     assert "[ducked]" in cmd2[cmd2.index("-filter_complex")+1]
+

@@ -86,7 +86,7 @@ def test_run_no_attribution_when_source_missing(tmp_path):
     """source.json 缺失（理论上不该发生，但别崩）——没有署名可加，只是不追加。"""
     ctx = Ctx(slug="c", config=Config({"remote": {"provider": "fake"}}), root=tmp_path,
                llm=FakeLLM(canned=_CANNED))
-    write_json(ctx.job, INPUT, {"duration": 1.0, "segments": []})
+    write_json(ctx.job, INPUT, {"duration": 1.0, "segments": [{"id": 0, "zh": "内容"}]})
     run(ctx)
     meta = read_json(ctx.job, OUTPUT)
     assert "素材来源" not in meta["description"]
@@ -326,3 +326,37 @@ def test_sdxl_failure_falls_back_to_source_frame(monkeypatch, tmp_path):
     assert (ctx.job / "thumb.jpg").exists()
     assert (ctx.job / "thumb_bg.png").exists()          # 抽帧成功落盘
     assert any("抽帧兜底" in w for w in ctx.warnings)
+
+
+def test_d8_blocks_empty_zh_script_non_subs_only(tmp_path):
+    """空片守卫(2026-07-07):配音版0段脚本(陈旧/坏转录)在发布前拦,不出废片。"""
+    import pytest
+    from src.config import Config
+    from src.context import Ctx
+    from src.errors import StageBlocked
+    from src.llm import FakeLLM
+    from src.stages import d8_meta
+    from src.util.jobs import write_json
+
+    ctx = Ctx(slug="empty", config=Config({"remote": {"provider": "fake"}}),
+              root=tmp_path / "jobs", llm=FakeLLM())
+    write_json(ctx.job, "zh_script.json", {"segments": []})   # 0 段,非 subs_only
+    write_json(ctx.job, "source.json", {"title": "T"})
+    with pytest.raises(StageBlocked, match="0 段"):
+        d8_meta.run(ctx)
+
+
+def test_d8_allows_subs_only_zero_narration(tmp_path):
+    """字幕版天然0旁白不拦(mode=subs_only)。"""
+    from src.config import Config
+    from src.context import Ctx
+    from src.llm import FakeLLM
+    from src.stages import d8_meta
+    from src.util.jobs import read_json, write_json
+
+    ctx = Ctx(slug="subsonly", config=Config({"remote": {"provider": "fake"}}),
+              root=tmp_path / "jobs", llm=FakeLLM(canned=_CANNED))
+    write_json(ctx.job, "zh_script.json", {"segments": [{"zh": "字幕内容"}], "mode": "subs_only"})
+    write_json(ctx.job, "source.json", {"title": "T", "identifier": "yt:x"})
+    d8_meta.run(ctx)                              # 不抛
+    assert (ctx.job / "meta.json").exists()
