@@ -44,7 +44,7 @@ remote:
   clone_wrapper: ~/clone-py # F5 引擎 wrapper(tts.provider=clone 时用)
   cosy_wrapper: ~/cosy-py   # CosyVoice2 引擎 wrapper(tts.provider=cosyvoice 时用)
   whisper_model: large-v3  # 升级(2026-07-04):对讲机/无线电等退化音频 medium.en 漏抓严重
-  timeout_sec: 1200        # GPU 任务卡死时中止管线而非无限挂起
+  timeout_sec: 5400        # GPU转录+分离+净化超时(2026-07-07:75min 4K长片全流程超20min,提到90min)
   clone_timeout_sec: 7200  # 克隆配音逐段跑完整部片子耗时更长(200段约15-25min)，独立超时上限，不跟转录共用
 video:
   resolution: 1080p
