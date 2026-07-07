@@ -80,7 +80,7 @@ p7:                        # 题材2 自然/野生动物:主供给=官方联邦�
     - usgovfilms
     - us-national-archives
     - publicmovies
-  bg_gain: 0.5
+  bg_gain: 1.0              # 用户定(2026-07-07):不降低背景音/音乐音量,保持原始录制电平(原0.5减半)
   duck_bg: false            # 用户定(2026-07-07):不压制背景音乐,音乐恒定音量(人声侧链压残留仍保留)              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
   bgm: original             # 用户定(2026-07-04):换乐版BGM压过人声,先停换乐用原声背景床(接受Content ID认领风险)
                              # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
