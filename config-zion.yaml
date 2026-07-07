@@ -61,7 +61,8 @@ p7:                        # P7 整片翻译管线：d1_source 选片参数(首�
   rows: 300                 # 搜索深度:HD门槛+去重滤得狠,前30热门不够挑
   collections:               # 首题材=太空：只在 NASA 集合里选，既贴题又产权最干净。
     - nasa                   # 换题材时改这里(可用可信集合见 src/media._ARCHIVE_SEARCH_COLLECTIONS)
-  bg_gain: 0.5              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
+  bg_gain: 0.5
+  duck_bg: false            # 用户定(2026-07-07):不压制背景音乐,音乐恒定音量(人声侧链压残留仍保留)              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
   bgm: original             # 用户定(2026-07-04):换乐版BGM压过人声,先停换乐用原声背景床(接受Content ID认领风险)
                              # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
                              # 配乐，demucs 去人声后原样保留在 no_vocals 背景床里，触发 4 条 YouTube

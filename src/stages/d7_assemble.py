@@ -354,7 +354,7 @@ def build_assemble_cmd(
     bg_input_opts: list[str] | None = None, encoder: str = "libx264",
     video_dur: float | None = None, slug: str = "", config: Config | None = None,
     warn: Callable[[str], None] | None = None, vocals: Path | None = None,
-    original_audio: bool = False,
+    original_audio: bool = False, duck_bg: bool = True,
 ) -> list[str]:
     """第②遍：源片视频烧字幕 + 背景床(narration 非空时 sidechaincompress 被旁白 duck，
     再与旁白 amix；narration=None 时只压低背景床，跳过 duck/amix，因为没有旁白可侧链)。
@@ -398,11 +398,16 @@ def build_assemble_cmd(
             wm_idx = 4
             bed += "[bg][3:a]sidechaincompress=threshold=0.02:ratio=12:attack=10:release=250[bgv];"
             bed_label = "[bgv]"
-        audio_fc = (
-            bed
-            + f"{bed_label}[2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
-            + "[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
-        )
+        if duck_bg:
+            audio_fc = (
+                bed
+                + f"{bed_label}[2:a]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=300[ducked];"
+                + "[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
+            )
+        else:
+            # 用户定(2026-07-07):不压制背景音乐——旁白不 duck 背景床,音乐恒定音量
+            # 与旁白直接 amix(人声侧链压残留仍保留,只在原声说话处作用,不碰音乐主体)
+            audio_fc = bed + f"{bed_label}[2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
     else:
         audio_fc = f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout]"
 
@@ -577,7 +582,8 @@ def run(ctx: Ctx) -> None:
     cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                bg_input_opts, encoder=encoder,
                                video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
-                               vocals=vocals_path, original_audio=subs_only)
+                               vocals=vocals_path, original_audio=subs_only,
+                               duck_bg=bool(ctx.config.get("p7.duck_bg", True)))
     env2 = nvenc_env(ctx.config) if encoder == "nvenc" else None
     proc2 = subprocess.run(cmd2, capture_output=True, text=True, env=env2)
     if proc2.returncode != 0 and encoder == "nvenc":
@@ -588,7 +594,8 @@ def run(ctx: Ctx) -> None:
         cmd2 = build_assemble_cmd(source, bg, narration_path, subs, job / OUTPUT, bg_gain,
                                    bg_input_opts, encoder="libx264",
                                    video_dur=video_dur, slug=ctx.slug, config=ctx.config, warn=wm_warn,
-                                   vocals=vocals_path, original_audio=subs_only)
+                                   vocals=vocals_path, original_audio=subs_only,
+                                   duck_bg=bool(ctx.config.get("p7.duck_bg", True)))
         proc2 = subprocess.run(cmd2, capture_output=True, text=True)
     if proc2.returncode != 0:
         raise RuntimeError(

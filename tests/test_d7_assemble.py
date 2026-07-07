@@ -1401,3 +1401,21 @@ def test_assemble_cmd_embeds_english_original_as_second_track(tmp_path):
                               tmp_path / "subs.ass", tmp_path / "out.mp4", 0.5,
                               original_audio=True)
     assert "language=eng" not in " ".join(cmd2)
+
+
+def test_assemble_cmd_no_duck_keeps_music_constant(tmp_path):
+    """用户定(2026-07-07):duck_bg=False 不压制背景音乐——旁白不 sidechain duck 床,
+    音乐恒定音量直接 amix;人声侧链压残留仍保留。"""
+    from src.stages.d7_assemble import build_assemble_cmd
+    vocals = tmp_path / "v.mp3"; vocals.write_bytes(b"V")
+    cmd = build_assemble_cmd(tmp_path/"s.mp4", tmp_path/"nv.mp3", tmp_path/"narr.wav",
+                             tmp_path/"subs.ass", tmp_path/"out.mp4", 0.5,
+                             vocals=vocals, duck_bg=False)
+    fc = cmd[cmd.index("-filter_complex")+1]
+    assert "[bgv][2:a]amix=inputs=2" in fc         # 床直接混,无旁白duck
+    assert "[ducked]" not in fc                     # 无旁白触发的ducking
+    assert "[bg][3:a]sidechaincompress" in fc       # 人声侧链压残留保留
+    # 默认仍 duck
+    cmd2 = build_assemble_cmd(tmp_path/"s.mp4", tmp_path/"nv.mp3", tmp_path/"narr.wav",
+                              tmp_path/"subs.ass", tmp_path/"out.mp4", 0.5, duck_bg=True)
+    assert "[ducked]" in cmd2[cmd2.index("-filter_complex")+1]
