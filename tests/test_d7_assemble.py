@@ -1412,9 +1412,10 @@ def test_assemble_cmd_no_duck_keeps_music_constant(tmp_path):
                              tmp_path/"subs.ass", tmp_path/"out.mp4", 0.5,
                              vocals=vocals, duck_bg=False)
     fc = cmd[cmd.index("-filter_complex")+1]
-    assert "[bgv][2:a]amix=inputs=2" in fc         # 床直接混,无旁白duck
+    assert "[bg][2:a]amix=inputs=2" in fc           # 床直接混,无旁白duck
     assert "[ducked]" not in fc                     # 无旁白触发的ducking
-    assert "[bg][3:a]sidechaincompress" in fc       # 人声侧链压残留保留
+    assert "sidechaincompress" not in fc            # 不压制:连人声侧链也去掉(背景音乐完整保留)
+    assert str(vocals) not in cmd                   # duck_bg=False 时 vocals 不进输入
     # 默认仍 duck
     cmd2 = build_assemble_cmd(tmp_path/"s.mp4", tmp_path/"nv.mp3", tmp_path/"narr.wav",
                               tmp_path/"subs.ass", tmp_path/"out.mp4", 0.5, duck_bg=True)

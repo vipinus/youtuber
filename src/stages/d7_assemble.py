@@ -390,10 +390,10 @@ def build_assemble_cmd(
         wm_idx = 3
         bed = f"[1:a]volume={bg_gain}[bg];"
         bed_label = "[bg]"
-        if vocals is not None:
-            # 原声人声轨当侧链钥匙(用户反馈 2026-07-04:配音间隙偶尔漏英文原声):
-            # demucs 两遍分离仍有渗漏,渗漏只出现在原片有人说话处——vocals 有能量
-            # 的每一刻把背景床强压下去,确定性灭残留;无人说话时环境声不受影响
+        # 人声侧链压残留只在 duck_bg=True 时用——它按原声说话与否压背景床,而解说密集
+        # 的纪录片原声几乎全程在讲,会把背景音乐全程压没(用户反馈 2026-07-07:背景音
+        # 被消除)。duck_bg=False(不压制背景音乐)时不叠它,残留交给分离阶段的二次净化。
+        if vocals is not None and duck_bg:
             cmd += ["-i", str(vocals)]
             wm_idx = 4
             bed += "[bg][3:a]sidechaincompress=threshold=0.02:ratio=12:attack=10:release=250[bgv];"
@@ -405,8 +405,8 @@ def build_assemble_cmd(
                 + "[ducked][2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
             )
         else:
-            # 用户定(2026-07-07):不压制背景音乐——旁白不 duck 背景床,音乐恒定音量
-            # 与旁白直接 amix(人声侧链压残留仍保留,只在原声说话处作用,不碰音乐主体)
+            # 用户定(2026-07-07):不压制背景音乐——背景床恒定音量,与旁白直接 amix,
+            # 不 duck、不人声侧链。背景音乐完整保留在成片里。
             audio_fc = bed + f"{bed_label}[2:a]amix=inputs=2:normalize=0,alimiter=limit=0.95[aout]"
     else:
         audio_fc = f"[1:a]volume={bg_gain},alimiter=limit=0.95[aout]"
