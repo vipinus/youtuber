@@ -209,8 +209,16 @@ def _set_ytdlp_extra(cfg) -> None:
     """从 p7.ytdlp_cookies_browser 配置 cookie 来源(2026-07-08:YouTube 反爬需登录
     cookie,zion 桌面机从 Firefox 提)。空/未配则不带 cookie(archive 源不需要)。"""
     global _YTDLP_EXTRA
+    extra: list[str] = []
     b = cfg.get("p7.ytdlp_cookies_browser", "")
-    _YTDLP_EXTRA = ["--cookies-from-browser", str(b)] if b else []
+    if b:
+        extra += ["--cookies-from-browser", str(b)]
+    # YouTube n-challenge(2026-07-08):需 deno + EJS 解算器才能拿到视频流,否则只有
+    # 图片。ejs:github 拉远程解算脚本(zion 已装 deno)。留空关闭。
+    rc = cfg.get("p7.ytdlp_remote_components", "ejs:github")
+    if rc:
+        extra += ["--remote-components", str(rc)]
+    _YTDLP_EXTRA = extra
 
 
 def _yt_videos_url(channel: str) -> str:
