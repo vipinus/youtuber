@@ -202,6 +202,17 @@ def _looks_narrated(*texts: str) -> bool:
     return not any(k in hay for k in _NON_NARRATED)
 
 
+_YTDLP_EXTRA: list[str] = []          # yt-dlp 附加参数(cookie 等),_run_youtube_gov 从配置设
+
+
+def _set_ytdlp_extra(cfg) -> None:
+    """从 p7.ytdlp_cookies_browser 配置 cookie 来源(2026-07-08:YouTube 反爬需登录
+    cookie,zion 桌面机从 Firefox 提)。空/未配则不带 cookie(archive 源不需要)。"""
+    global _YTDLP_EXTRA
+    b = cfg.get("p7.ytdlp_cookies_browser", "")
+    _YTDLP_EXTRA = ["--cookies-from-browser", str(b)] if b else []
+
+
 def _yt_videos_url(channel: str) -> str:
     """@handle / 完整URL 都归一成频道 Videos 标签页 URL。"""
     if channel.startswith("http"):
@@ -213,7 +224,7 @@ def _yt_list_channel(ytdlp: str, channel: str, limit: int) -> list[dict]:
     """yt-dlp flat-playlist 列频道视频:[{id,title,duration,channel},...]。真网络,测试必打桩。"""
     import subprocess
     out = subprocess.run(
-        [ytdlp, "--flat-playlist", "-J", "--playlist-end", str(limit), _yt_videos_url(channel)],
+        [ytdlp, *_YTDLP_EXTRA, "--flat-playlist", "-J", "--playlist-end", str(limit), _yt_videos_url(channel)],
         capture_output=True, text=True, timeout=600, check=True)
     data = json.loads(out.stdout)
     return [e for e in (data.get("entries") or []) if e]
@@ -223,7 +234,7 @@ def _yt_fetch_entry(ytdlp: str, video_id: str) -> dict:
     """按 id 抓单个视频的选片元数据(定点指定用,视频可能超出频道列表深度)。"""
     import subprocess
     out = subprocess.run(
-        [ytdlp, "-J", "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
+        [ytdlp, *_YTDLP_EXTRA, "-J", "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
         capture_output=True, text=True, timeout=120, check=True)
     d = json.loads(out.stdout)
     return {"id": d.get("id"), "title": d.get("title"), "duration": d.get("duration"),
@@ -239,7 +250,7 @@ def _yt_video_stats(ytdlp: str, video_id: str) -> tuple[int, int]:
     import subprocess
     try:
         out = subprocess.run(
-            [ytdlp, "-s", "--print", "%(view_count)s|%(like_count)s", "--no-playlist",
+            [ytdlp, *_YTDLP_EXTRA, "-s", "--print", "%(view_count)s|%(like_count)s", "--no-playlist",
              f"https://www.youtube.com/watch?v={video_id}"],
             capture_output=True, text=True, timeout=60, check=True)
         v, _, l = out.stdout.strip().splitlines()[-1].partition("|")
@@ -255,7 +266,7 @@ def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_byt
     fmt = (f"bestvideo[height>={min_height}][ext=mp4]+bestaudio[ext=m4a]"
            f"/best[height>={min_height}][ext=mp4]")
     subprocess.run(
-        [ytdlp, "-f", fmt, "--max-filesize", str(max_bytes), "--merge-output-format", "mp4",
+        [ytdlp, *_YTDLP_EXTRA, "-f", fmt, "--max-filesize", str(max_bytes), "--merge-output-format", "mp4",
          "-o", str(dest), "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
         capture_output=True, text=True, timeout=7200, check=True)
 
@@ -268,7 +279,7 @@ def _yt_download_subs(ytdlp: str, video_id: str, job: Path) -> bool:
     for flag, langs in (("--write-subs", "en.*,en"), ("--write-auto-subs", "en-orig,en")):
         try:
             subprocess.run(
-                [ytdlp, "--skip-download", flag, "--sub-langs", langs,
+                [ytdlp, *_YTDLP_EXTRA, "--skip-download", flag, "--sub-langs", langs,
                  "--sub-format", "json3", "-o", str(job / "source_subs.%(ext)s"),
                  "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
                 capture_output=True, text=True, timeout=300, check=True)
@@ -310,6 +321,7 @@ def _run_youtube_gov(ctx: Ctx) -> None:
     音轨探测。"""
     cfg = ctx.config
     ytdlp = str(Path(str(cfg.get("p7.ytdlp_bin", "yt-dlp"))).expanduser())
+    _set_ytdlp_extra(cfg)          # YouTube 反爬:带上 cookie(见 _set_ytdlp_extra)
     channels = list(cfg.get("p7.yt_channels", []))
     if not channels:
         raise RuntimeError("d1_source: p7.source=youtube_gov 但 p7.yt_channels 为空")

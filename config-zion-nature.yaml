@@ -55,6 +55,7 @@ guardrails:
 p7:                        # 题材2 自然/野生动物:主供给=官方联邦政府 YouTube 频道(youtube_gov)
   source: youtube_gov        # archive(默认) | youtube_gov(yt-dlp+频道白名单)
   ytdlp_bin: ~/ytdlp-venv/bin/yt-dlp  # 专用venv(pipe-venv无pip,机器惯例一工具一venv)
+  ytdlp_cookies_browser: firefox  # YouTube反爬(2026-07-08):从zion桌面Firefox提cookie认证
   yt_channels:               # ⚠️许可门=白名单本身:只能放美国联邦机构官方频道(17 USC §105 法定PD)
     - "@NationalParkService" # 国家公园管理局
     - "@USFWS"               # 鱼类和野生动物管理局
