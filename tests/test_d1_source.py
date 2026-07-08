@@ -758,3 +758,35 @@ def test_pin_accepts_whitelisted_channel(monkeypatch, tmp_path):
     d1_source.run(ctx)
     from src.util.jobs import read_json
     assert read_json(ctx.job, d1_source.META_OUTPUT)["identifier"] == "yt:realvid"
+
+
+def test_youtube_gov_deprioritizes_meeting_format(monkeypatch, tmp_path):
+    """会议类降权(用户定2026-07-08):town hall 哪怕点赞高也排到纪录片之后。"""
+    from src.stages import d1_source
+    entries = [
+        {"id": "townhall", "title": "Agencywide Town Hall with NASA Administrator", "duration": 3000,
+         "view_count": 9_000_000, "like_count": 50_000},   # 会议,点赞最高
+        {"id": "doc", "title": "Planetary Defenders Documentary", "duration": 3000,
+         "view_count": 100, "like_count": 100},             # 纪录片,点赞低
+    ]
+    downloaded = []
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    monkeypatch.setattr(d1_source, "_yt_video_stats", lambda b, v: (0, 0))
+    monkeypatch.setattr(d1_source, "_yt_download", lambda b, vid, dest, mh, mb: (downloaded.append(vid), dest.write_bytes(b"MP4")))
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@NASA"]})
+
+    d1_source.run(ctx)
+
+    from src.util.jobs import read_json
+    assert downloaded[0] == "doc"      # 纪录片先选,会议片被降权到后
+    assert read_json(ctx.job, d1_source.META_OUTPUT)["identifier"] == "yt:doc"
+
+
+def test_is_meeting_format_keywords():
+    from src.stages.d1_source import _is_meeting_format
+    assert _is_meeting_format("Agencywide Town Hall with NASA")
+    assert _is_meeting_format("Artemis II Press Conference")
+    assert _is_meeting_format("Budget Hearing before Congress")
+    assert not _is_meeting_format("Planetary Defenders Documentary")

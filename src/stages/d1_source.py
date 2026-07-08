@@ -166,6 +166,21 @@ _NON_NARRATED = (
     "outtakes", "screen tests", "camera test",            # Prelinger 高清池几乎全是这类,画质够但没解说)
 )
 
+# 会议/发布会/直播形式(用户定 2026-07-08:降权,不排除)。这类是长时间松散讲话
+# (town hall/发布会/听证/网研会),不是影像叙事纪录片——排到点赞排序最后,有
+# 制作旁白的纪录片优先命中。命中不拦截,只把 sort 优先级压到底。
+_MEETING_FORMAT = (
+    "town hall", "briefing", "press conference", "news conference", "teleconference",
+    "hearing", "webinar", "media availability", "roundtable", "fireside", "panel",
+    "q&a", "ama", "town-hall", "all-hands", "town hall meeting", "presser",
+    "state of nasa", "advisory council", "committee meeting", "public meeting",
+)
+
+
+def _is_meeting_format(title: str) -> bool:
+    t = (title or "").lower()
+    return any(k in t for k in _MEETING_FORMAT)
+
 
 def _has_audio(path: Path) -> bool:
     """下载后实测有没有音轨——标题启发式永远猜不全(真跑:APOLLO 11 16MM ONBOARD
@@ -338,8 +353,11 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             v, l = _yt_video_stats(ytdlp, e["id"])
             e["view_count"] = e.get("view_count") or v
             e["like_count"] = e.get("like_count") if e.get("like_count") is not None else l
-    # 用户定(2026-07-04):好评(点赞)优先,播放量次之
-    survivors.sort(key=lambda t: (t[0].get("like_count") or 0, t[0].get("view_count") or 0),
+    # 用户定(2026-07-04):好评(点赞)优先,播放量次之。
+    # 会议/发布会形式降权(用户定 2026-07-08):非会议片整体排在会议片前面,组内再
+    # 按点赞——即 town hall 这类哪怕点赞高也排到所有纪录片之后,不排除只压后。
+    survivors.sort(key=lambda t: (not _is_meeting_format(str(t[0].get("title", ""))),
+                                  t[0].get("like_count") or 0, t[0].get("view_count") or 0),
                    reverse=True)
 
     # 定点指定(p7.yt_pin_ids):人工点名的视频强制排队首(如系列片续集),仍过
