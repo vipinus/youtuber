@@ -790,3 +790,26 @@ def test_is_meeting_format_keywords():
     assert _is_meeting_format("Artemis II Press Conference")
     assert _is_meeting_format("Budget Hearing before Congress")
     assert not _is_meeting_format("Planetary Defenders Documentary")
+
+
+def test_youtube_gov_prefer_keywords_ranks_first(monkeypatch, tmp_path):
+    """题材偏好(2026-07-09):标题含偏好词的排最前,越过点赞更高的非偏好片。"""
+    from src.stages import d1_source
+    entries = [
+        {"id": "history", "title": "National Day of Remembrance Documentary", "duration": 3000,
+         "view_count": 9_000_000, "like_count": 50_000},   # 历史,点赞最高
+        {"id": "wolf", "title": "Wolves of Yellowstone Wildlife Documentary", "duration": 3000,
+         "view_count": 100, "like_count": 100},             # 动物,点赞低
+    ]
+    dl = []
+    monkeypatch.setattr(d1_source, "_yt_list_channel", lambda b, c, l: entries)
+    monkeypatch.setattr(d1_source, "_yt_video_stats", lambda b, v: (0, 0))
+    monkeypatch.setattr(d1_source, "_yt_download", lambda b, vid, dest, mh, mb: (dl.append(vid), dest.write_bytes(b"MP4")))
+    monkeypatch.setattr(d1_source, "_probe_height", lambda p: 1080)
+    monkeypatch.setattr(d1_source, "_has_audio", lambda p: True)
+    ctx = _gov_ctx(tmp_path, {"source": "youtube_gov", "yt_channels": ["@USFWS"],
+                              "prefer_keywords": ["wildlife", "wolf"]})
+    d1_source.run(ctx)
+    from src.util.jobs import read_json
+    assert dl[0] == "wolf"      # 动物片优先,越过点赞更高的历史片
+    assert read_json(ctx.job, d1_source.META_OUTPUT)["identifier"] == "yt:wolf"

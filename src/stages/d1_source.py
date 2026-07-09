@@ -373,10 +373,19 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             v, l = _yt_video_stats(ytdlp, e["id"])
             e["view_count"] = e.get("view_count") or v
             e["like_count"] = e.get("like_count") if e.get("like_count") is not None else l
+    # 题材偏好(p7.prefer_keywords,用户定 2026-07-09):标题含偏好词的整体排最前
+    # (自然线设动物词→优先动物片,不再撞 NPS 频道混入的历史/文化片)。留空不启用。
+    prefer = [str(k).lower() for k in (cfg.get("p7.prefer_keywords", []) or [])]
+
+    def _prefer_hit(title: str) -> bool:
+        return bool(prefer) and any(k in title.lower() for k in prefer)
+
     # 用户定(2026-07-04):好评(点赞)优先,播放量次之。
     # 会议/发布会形式降权(用户定 2026-07-08):非会议片整体排在会议片前面,组内再
     # 按点赞——即 town hall 这类哪怕点赞高也排到所有纪录片之后,不排除只压后。
-    survivors.sort(key=lambda t: (not _is_meeting_format(str(t[0].get("title", ""))),
+    # 排序优先级:题材偏好命中 > 非会议 > 点赞 > 播放量(都降序)。
+    survivors.sort(key=lambda t: (_prefer_hit(str(t[0].get("title", ""))),
+                                  not _is_meeting_format(str(t[0].get("title", ""))),
                                   t[0].get("like_count") or 0, t[0].get("view_count") or 0),
                    reverse=True)
 

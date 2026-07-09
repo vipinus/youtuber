@@ -67,7 +67,25 @@ p7:                        # 题材2 自然/野生动物:主供给=官方联邦�
   min_sec: 300              # 5min 下限：太短不算"整片纪录片"
   max_sec: 28800            # 8h 上限(用户定):长纪录片/整场节目纳入
   max_bytes: 8000000000     # 8GB(zion 生产档:8h 720p 约 7GB)
-  min_height: 1080          # 用户定(2026-07-04):自然类只收1080p+(代码层另有700全局地板)
+  min_height: 1080
+  prefer_keywords:            # 题材偏好(2026-07-09):自然线优先动物/野生生物,避开NPS历史片
+    - wildlife
+    - animal
+    - bird
+    - fish
+    - bear
+    - wolf
+    - whale
+    - eagle
+    - salmon
+    - turtle
+    - deer
+    - elk
+    - bison
+    - manatee
+    - sturgeon
+    - species
+    - refuge          # 用户定(2026-07-04):自然类只收1080p+(代码层另有700全局地板)
   rows: 100                 # youtube_gov:每频道列表深度(4频道x100;幸存者才逐条拉播放量)
   collections:               # 题材2=自然/野生动物:政府自然片(NPS/FWS)+策展PD片库
     - prelinger
