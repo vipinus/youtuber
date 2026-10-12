@@ -1,6 +1,10 @@
 {
   "license_note": "Kevin MacLeod (incompetech.com), Licensed under Creative Commons: By Attribution 4.0 — 使用须在简介署名(d8/d9c 自动追加)。moods 供 d7 按影片内容选曲(空缺=任意场景可用)",
   "tracks": [
+    {"file": "Kiss_the_Sky.loop.flac", "title": "Kiss the Sky", "artist": "Aakash Gandhi",
+     "license": "YouTube Audio Library", "moods": ["vpn", "calm"],
+     "attribution": "",
+     "note": "站长 2026-10-12 定：VPN 视频的背景音乐一律用这首（YouTube 音频库许可，不用署名，不会被 Content ID 主张）。原曲 2:24、结尾十几秒渐弱到无声，直接循环会每两分多钟空一段；.loop.flac 是掐掉结尾、首尾 4 秒交叉过渡做成的无缝循环版（原文件 Kiss_the_Sky.mp3 留着）。"},
     {"file": "Frozen_Star.mp3", "title": "Frozen Star", "artist": "Kevin MacLeod",
      "license": "CC-BY-4.0", "moods": ["space", "somber"],
      "attribution": "背景音乐：Frozen Star - Kevin MacLeod (incompetech.com), CC BY 4.0"},

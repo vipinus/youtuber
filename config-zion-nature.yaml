@@ -1,140 +1,152 @@
-# 题材2=自然/野生动物 的 zion 生产配置(基线抄 config-zion.yaml,只改选片/播放列表/分辨率档)。
-# 用法：~/pipe-venv/bin/python -m src.run --case <slug> --config config-zion.yaml
-#
-# 跟 config.yaml 的差异（其余 gemini/archive/youtube/private/playlist 等全部
-# 照抄 config.yaml，保持行为一致）：
-#   1. remote.provider: local（不再 ssh/scp 自己，直接本机跑 scripts/zion_gpu_asr.py /
-#      zion_sdxl.py / zion_clone_tts.py），remote.wrapper: ~/gpu-py，
-#      remote.clone_wrapper: ~/clone-py（P7 T17 声音克隆配音专用 venv 的 wrapper）。
-#   2. p7.encoder: nvenc（GPU 硬件编码，ffmpeg h264_nvenc）。
-#   3. paths.title_font: 指向 zion 上实际装的 CJK 字体文件路径。
-#   4. archive.dir 沿用 config.yaml 里已经就是 zion NFS 挂载点的默认值。
-#   5. tts.provider: clone（P7 T17：F5-TTS one-shot 跨语种声音克隆配音——每个
-#      说话人的中文旁白用他/她自己的原声当参考音色，比固定的 edge 男/女声更
-#      贴合原片。用户已在 zion 上live测过质量认可。单段克隆失败时自动回退
-#      tts.fallback_provider（默认 edge）补上，不会让一段坏拖累整片。想切回
-#      旧的固定音色方案，把 tts.provider 改回 edge 即可，voice/voice_female/
-#      rate 仍然保留供 edge 分支或 clone 的回退分支使用。
 cost_tier: free
-pipeline: doc              # original(s1-s9 选题→出片→发布) | doc(P7 d1-d7 整片翻译，现为主产品)
-                           # 覆盖：`python -m src.run --pipeline original --case <slug>`
+pipeline: doc
 llm:
-  provider: ollama          # ollama(eros云端,无日配额) | gemini(免费20次/天) | fake | claude
+  provider: ollama
   ollama_host: http://eros:11434
-  ollama_model: gemma4:31b-cloud   # Ollama云端跑,零本地权重;订阅后可换 gemini-3-flash-preview
+  ollama_model: gemma4:31b-cloud
   gemini_model: gemini-2.5-flash
   script_provider: gemini
 tts:
-  provider: cosyvoice        # CosyVoice2(2026-07-05 A/B盲听胜出) | clone(F5) | edge | fake
-  fallback_provider: edge    # clone 模式下单段克隆失败时的回退引擎(edge|fake)
-  voice: zh-CN-YunyangNeural       # 默认男声旁白；段 gender=="male"/null/缺失都落它(不确定不瞎猜)——edge 分支用，clone 分支的回退段也用
-  voice_female: zh-CN-XiaoxiaoNeural  # P7 T9 性别匹配配音：段 gender=="female" 时用它(修用户反馈的女声画面配男声)
-  rate: "+0%"               # 正常语速(用户定)。慢速会让配音溢出时间槽(d7有atempo防撞兜底)
+  provider: cosyvoice
+  fallback_provider: edge
+  voice: zh-CN-YunyangNeural
+  voice_female: zh-CN-XiaoxiaoNeural
+  rate: +0%
 media:
-  provider: archive         # archive(archive.org PD影片,动态贴题) | nasa(静图) | fake
+  provider: archive
 subs:
-  max_chars: 20            # 字幕单条软上限：句末标点必断、次级标点够长才断、不拦腰断词
+  max_chars: 20
 youtube:
-  provider: youtube        # youtube | fake
+  provider: youtube
   client_secret: secrets/client_secret.json
   token: secrets/token.json
 remote:
-  provider: local           # P7 T14：zion 上原生跑管线，本机直接 subprocess 经 wrapper 跑 GPU 脚本，不 ssh/scp
-  wrapper: ~/gpu-py         # 先设好 LD_LIBRARY_PATH 再 exec ~/asr-venv/bin/python 的 wrapper(必须经它调用)
-  clone_wrapper: ~/clone-py # F5 引擎 wrapper(tts.provider=clone 时用)
-  cosy_wrapper: ~/cosy-py   # CosyVoice2 引擎 wrapper(tts.provider=cosyvoice 时用)
-  whisper_model: large-v3  # 升级(2026-07-04):对讲机/无线电等退化音频 medium.en 漏抓严重
-  timeout_sec: 5400        # GPU转录+分离+净化超时(2026-07-07:75min 4K长片全流程超20min,提到90min)
-  clone_timeout_sec: 7200  # 克隆配音逐段跑完整部片子耗时更长(200段约15-25min)，独立超时上限，不跟转录共用
+  provider: local
+  wrapper: ~/gpu-py
+  clone_wrapper: ~/clone-py
+  cosy_wrapper: ~/cosy-py
+  whisper_model: large-v3
+  timeout_sec: 5400
+  clone_timeout_sec: 7200
 video:
   resolution: 1080p
   fps: 30
 guardrails:
   min_documented_facts: 3
-  allowed_licenses: [public-domain, cc0, cc-by, cc-by-sa]
-p7:                        # 题材2 自然/野生动物:主供给=官方联邦政府 YouTube 频道(youtube_gov)
-  source: youtube_gov        # archive(默认) | youtube_gov(yt-dlp+频道白名单)
-  ytdlp_bin: ~/ytdlp-venv/bin/yt-dlp  # 专用venv(pipe-venv无pip,机器惯例一工具一venv)
-  ytdlp_cookies_browser: firefox  # YouTube反爬(2026-07-08):从zion桌面Firefox提cookie认证
-  yt_channels:               # ⚠️许可门=白名单本身:只能放美国联邦机构官方频道(17 USC §105 法定PD)
-    - "@NationalParkService" # 国家公园管理局
-    - "@USFWS"               # 鱼类和野生动物管理局
-    - "@usoceangov"          # NOAA 海洋局
-    - "@NOAAFisheries"       # NOAA 渔业局
-  include_identifiers:       # archive 分支的定点白名单(切回 source:archive 时生效)
-    - in-effigy-NPS-documentary  # NPS官方纪录片 1080p/21min,2026-07-03 人工核验PD
-  query: 'subject:(wildlife OR "national parks" OR nature OR birds OR fisheries OR conservation) OR title:(wildlife OR wilderness OR "national park" OR salmon OR bird OR refuge OR everglades OR yellowstone)'
-  min_sec: 300              # 5min 下限：太短不算"整片纪录片"
-  max_sec: 28800            # 8h 上限(用户定):长纪录片/整场节目纳入
-  max_bytes: 8000000000     # 8GB(zion 生产档:8h 720p 约 7GB)
+  allowed_licenses:
+  - public-domain
+  - cc0
+  - cc-by
+  - cc-by-sa
+p7:
+  source: youtube_gov
+  ytdlp_bin: ~/ytdlp-venv/bin/yt-dlp
+  ytdlp_cookies_browser: firefox
+  exclude_meeting: true
+  yt_channels:
+  - '@NationalParkService'
+  - '@USFWS'
+  - '@usoceangov'
+  - '@NOAAFisheries'
+  include_identifiers:
+  - in-effigy-NPS-documentary
+  query: subject:(wildlife OR "national parks" OR nature OR birds OR fisheries OR
+    conservation) OR title:(wildlife OR wilderness OR "national park" OR salmon OR
+    bird OR refuge OR everglades OR yellowstone)
+  min_sec: 300
+  max_sec: 28800
+  max_bytes: 8000000000
   min_height: 1080
-  prefer_keywords:            # 题材偏好(2026-07-09):自然线优先动物/野生生物,避开NPS历史片
-    - wildlife
-    - animal
-    - bird
-    - fish
-    - bear
-    - wolf
-    - whale
-    - eagle
-    - salmon
-    - turtle
-    - deer
-    - elk
-    - bison
-    - manatee
-    - sturgeon
-    - species
-    - refuge          # 用户定(2026-07-04):自然类只收1080p+(代码层另有700全局地板)
-  rows: 100                 # youtube_gov:每频道列表深度(4频道x100;幸存者才逐条拉播放量)
-  collections:               # 题材2=自然/野生动物:政府自然片(NPS/FWS)+策展PD片库
-    - prelinger
-    - FedFlix
-    - usgovfilms
-    - us-national-archives
-    - publicmovies
-  bg_gain: 1.0              # 用户定(2026-07-07):不降低背景音/音乐音量,保持原始录制电平(原0.5减半)
-  duck_bg: false            # 用户定(2026-07-07):不压制背景音乐,音乐恒定音量(人声侧链压残留仍保留)              # d7_assemble：背景床音量(sidechaincompress duck 前)，0~1
-  bgm: original             # 用户定(2026-07-04):换乐版BGM压过人声,先停换乐用原声背景床(接受Content ID认领风险)
-                             # 为什么：样片首次真实上传，NASA 公有领域片里内嵌了片方外购的商业库背景
-                             # 配乐，demucs 去人声后原样保留在 no_vocals 背景床里，触发 4 条 YouTube
-                             # Content ID 版权认领(不下架但拦变现)。replace 换成 assets/bgm 下的
-                             # CC-BY 免版税曲目，从源头消掉认领风险。
-  bgm_dir: assets/bgm       # replace 模式的曲目池目录(须含 bgm.json 清单)；缺失/清单空 → 自动回退
-                             # original，只告警不中止 run
-  watermark: assets/watermark_tr.png  # d8_meta：缩略图右上角频道水印(透明底 PNG)
-  video_watermark: true    # P7 T18：正片全程烧台标水印(右上/右下电视台角标式切换)，
-                             # 关掉就不叠加、跟老行为一致；文件缺失/读不到也自动跳过，只告警不中止
-  wm_min_sec: 300           # 水印切换间隔下限(5min)
-  wm_max_sec: 600           # 水印切换间隔上限(10min)——切换点由 slug 的 crc32 确定性生成(同 slug 重跑不变)
-  encoder: nvenc            # P7 T14：zion 有 RTX 3070 Ti，用 GPU 硬编(h264_nvenc -preset p5 -cq 23)
-                             # 比 CPU libx264 快得多；失败(驱动没装对/显存被占)自动回退 libx264 重试一次，
-                             # 不会丢片子。encoder_lib_path 留默认 /run/opengl-driver/lib(NixOS 驱动库路径)。
+  prefer_keywords:
+  - wildlife
+  - animal
+  - bird
+  - bear
+  - wolf
+  - whale
+  - eagle
+  - turtle
+  - deer
+  - elk
+  - bison
+  - manatee
+  - otter
+  - seal
+  - fox
+  - bat
+  - species
+  - refuge
+  avoid_keywords:
+  - salmon
+  - fish
+  - sturgeon
+  - trout
+  - coho
+  - chinook
+  - steelhead
+  - cod
+  - herring
+  rows: 500
+  shorts:
+    enabled: true
+    count: 1
+    max_sec: 55
+    publish: auto
+    visibility: public
+  collections:
+  - prelinger
+  - FedFlix
+  - usgovfilms
+  - us-national-archives
+  - publicmovies
+  bg_gain: 1.0
+  duck_bg: false
+  bgm: original
+  bgm_dir: assets/bgm
+  watermark: assets/watermark_tr.png
+  video_watermark: true
+  wm_min_sec: 300
+  wm_max_sec: 600
+  encoder: nvenc
+  bookend:
+    enabled: true
+    intro_sec: 3
+    outro_sec: 6
+    channel_name: 发现纪录片
+    thanks: 感谢观看
+    like_label: 点赞
+    sub_label: 订阅
+    notify_label: 打开提醒
+    tail: 每期解锁一部 NASA 中文配音纪录片
+    logo: assets/avatar_zh.png
+    bgm: Morning.mp3
 publish:
-  auto_upload: true         # 全自动上传 YouTube（用户要求）
-  visibility: private       # private | unlisted | public —— 冷启动安全档：自动传成私享草稿，过一眼后改 public 即全自动公开（护栏#3）
-  playlist: "自然/野生动物"  # 上传成功后自动加入的播放列表标题（找不到就新建）；换题材改这里；留空则不入列
-bilibili:                    # P7 T19：d9b_bilibili——YouTube 之外追加发布到 B 站(biliup CLI, best-effort)
-  enabled: true              # zion 生产开(cookies.json 已在 ~/youtuber-secrets 下走过一次性 QR 登录)
+  auto_upload: true
+  visibility: private
+  playlist: 自然/野生动物
+bilibili:
+  enabled: true
   biliup_bin: ~/bili-venv/bin/biliup
-  cookie_dir: ~/youtuber-secrets  # biliup 认 CWD 找 cookies.json
-  tid: 201                   # 分区:科技-科学科普(可改纪录片区)
-  only_self: true            # 冷启动:仅自己可见,审后手动放开
-  line: ""                   # 上传线路,留空自动
-  submit: app                # 提交接口(2026-07-05):app(21566频率限制会冷却) 优于 web(601验证码墙,CLI破不了)
-youtube_en:                  # P7 T20：d9c_publish_en——英文原声原片(source.mp4)追加发布到第二账号
-  enabled: true              # zion 生产开(secrets/token_en.json 已走过一次性授权，选第二个 Google 账号)
+  cookie_dir: ~/youtuber-secrets
+  tid: 201
+  only_self: true
+  line: ''
+  submit: app
+youtube_en:
+  enabled: true
   token: secrets/token_en.json
-  client_secret: secrets/client_secret_en.json  # 独立OAuth客户端(SUMMIT项目,独立配额池)
-  replace_bgm: false         # 用户定(2026-07-04):停换乐,英文版直传原声原片
-  visibility: unlisted       # 英文源片频道:unlisted 起步(护栏#3:从不默认 public)
-  playlist: "Nature / Wildlife Archive"
-archive:                    # P7 T15：d10_archive——发布后把整份 job 搬去 NAS
-  dir: "~/nas/Share/youtuber" # 归档根目录(zion 上 NFS 自动挂载 tatara 的写入点)；`~` 会展开成当前用户家目录。
-                             # 目录不存在/不可写 → 只告警+落 status:unreachable，不中止 run
-  trim_local: true          # 归档校验(逐文件核对存在+大小)通过后删本地大媒体文件，*.json/*.ass/thumb.jpg 留本地当台账
+  client_secret: secrets/client_secret_en.json
+  replace_bgm: false
+  visibility: unlisted
+  playlist: Nature / Wildlife Archive
+archive:
+  dir: ~/nas/Share/youtuber
+  trim_local: true
 paths:
+  registry: ~/nas/Share/youtuber/published.json
   jobs_root: jobs
   seeds: seeds/cases.yaml
   fallback_image: assets/fallback.jpg
-  title_font: /home/fabric/.local/share/fonts/NotoSansCJK-Black.ttc  # P7 T14：zion 上装的 CJK 字体(fontconfig 名 "Noto Sans CJK SC"，Pillow 要给 FILE 路径)
+  title_font: /home/fabric/.local/share/fonts/NotoSansCJK-Black.ttc
+  title_font_bold: /home/fabric/.local/share/fonts/NotoSansCJK-Bold.ttc
+  emoji_font: /nix/store/phyz79jvvpqmhwyx5cryjkx31kpw77n3-noto-fonts-color-emoji-2.051/share/fonts/noto/NotoColorEmoji.ttf

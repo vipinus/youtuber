@@ -320,9 +320,13 @@ class LocalGPU:
         clone_timeout_sec: int = 7200,
         repo_root: Path | None = None,
         clone_script: str = _ZION_CLONE_SCRIPT_NAME,
+        image_wrapper: str = "",
     ):
         self.wrapper = str(Path(wrapper).expanduser())
         self.clone_wrapper = str(Path(clone_wrapper).expanduser())  # 克隆引擎 venv 的 wrapper
+        # SDXL 封面生成走独立解释器/venv:diffusers 装在 t2v-venv 而非 asr-venv(gpu-py)。
+        # 留空则回退 self.wrapper(向后兼容 zion:diffusers 与 whisper 同 venv 的老部署)。
+        self.image_wrapper = str(Path(image_wrapper).expanduser()) if image_wrapper else self.wrapper
         self.clone_script = clone_script       # zion_clone_tts.py(F5) | zion_cosy_tts.py(CosyVoice2)
         self.whisper_model = whisper_model
         self.timeout_sec = timeout_sec        # 同 SSHRemoteGPU：GPU 任务卡死不能无限挂住管线
@@ -350,7 +354,7 @@ class LocalGPU:
     def generate_image(self, prompt: str, out_path: Path) -> Path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         script = self.repo_root / "scripts" / _ZION_SDXL_SCRIPT_NAME
-        cmd = [self.wrapper, str(script), prompt, str(out_path)]
+        cmd = [self.image_wrapper, str(script), prompt, str(out_path)]
         _run_checked(
             cmd, self.timeout_sec,
             timeout_msg=(
@@ -401,5 +405,6 @@ def get_remote(config: Config) -> RemoteGPU:
                            else config.get("remote.clone_wrapper", "~/clone-py")),
             clone_script=(_ZION_COSY_SCRIPT_NAME if cosy else _ZION_CLONE_SCRIPT_NAME),
             clone_timeout_sec=config.get("remote.clone_timeout_sec", 7200),
+            image_wrapper=config.get("remote.image_wrapper", ""),
         )
     raise ValueError(f"未知 remote provider: {provider}")

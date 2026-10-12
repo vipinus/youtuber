@@ -24,11 +24,16 @@ tempfile+os.replace 原子替换语义，不会因为写到一半崩溃而留半
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from src.util.jobs import write_json
 
 REGISTRY_NAME = "published.json"
+
+# 多机共享(用户定 2026-07-12):设 env YOUTUBER_REGISTRY=<NAS上published.json绝对路径>
+# 则 zion/pluto 读写同一份 NAS 注册表,dedup 不再分裂。留空则退回本机 jobs_root/。
+_ENV_REGISTRY = "YOUTUBER_REGISTRY"
 
 # d1_source.META_OUTPUT 的字面值。此处不 import src.stages.d1_source ——
 # 那样会和 d1_source 反过来 import 本模块形成循环 import。
@@ -36,6 +41,9 @@ _SOURCE_META = "source.json"
 
 
 def registry_path(jobs_root: Path) -> Path:
+    shared = os.environ.get(_ENV_REGISTRY, "").strip()
+    if shared:
+        return Path(shared).expanduser()
     return jobs_root / REGISTRY_NAME
 
 
@@ -58,10 +66,17 @@ def published_identifiers(jobs_root: Path) -> set[str]:
 
 
 def append_published(jobs_root: Path, entry: dict) -> None:
-    """read-modify-write 一条新记录进登记表；写入本身原子替换。"""
+    """read-modify-write 一条新记录进登记表；写入本身原子替换。
+    共享模式(env YOUTUBER_REGISTRY)下写到 NAS 绝对路径,并 chmod 0666 让另一台
+    机器(不同 uid,如 pluto=root/zion=fabric)也能读写同一份。"""
+    path = registry_path(jobs_root)
     entries = load_published(jobs_root)
     entries.append(entry)
-    write_json(jobs_root, REGISTRY_NAME, entries)
+    write_json(path.parent, path.name, entries)     # tempfile 落在注册表同目录,原子替换有效
+    try:
+        os.chmod(path, 0o666)                        # 跨用户可读写(NAS 共享必需)
+    except OSError:
+        pass
 
 
 def in_flight_identifiers(jobs_root: Path, exclude_slug: str) -> set[str]:

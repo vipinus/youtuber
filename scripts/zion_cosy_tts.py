@@ -94,6 +94,12 @@ def main(argv: list[str]) -> int:
 
     cv = CosyVoice2(COSY_MODEL_DIR, load_jit=False, load_trt=False, fp16=True)
     ref_cache: dict[int, Path] = {}
+    # 单一指定音色(用户定 2026-07-14):env COSY_FIXED_REF=<16k mono wav 绝对路径> 时,全片
+    # 所有段都用这一个参考音色(不再逐段 pick_reference 用原片各说话人自己的声),用于把
+    # 英文纪录片改配成指定旁白音色的中文版。留空则保持原逐段克隆行为。
+    fixed_ref = os.environ.get("COSY_FIXED_REF", "").strip()
+    if fixed_ref:
+        print(f"单一音色模式: 全片用 {fixed_ref}", file=sys.stderr)
     done = skipped = 0
     for idx, seg in enumerate(segments):
         zh = (seg.get("zh") or "").strip()
@@ -101,10 +107,13 @@ def main(argv: list[str]) -> int:
             continue
         seg_id = int(seg.get("id", 0))
         try:
-            ref_seg = pick_reference(segments, idx)
-            if ref_seg is None:
-                raise RuntimeError("全片选不出任何参考段")
-            ref_path = _slice_reference_16k(vocals_path, ref_seg, ref_cache, ref_tmp_dir)
+            if fixed_ref:
+                ref_path = fixed_ref
+            else:
+                ref_seg = pick_reference(segments, idx)
+                if ref_seg is None:
+                    raise RuntimeError("全片选不出任何参考段")
+                ref_path = _slice_reference_16k(vocals_path, ref_seg, ref_cache, ref_tmp_dir)
             text = normalize_zh_numbers(zh)
             for out in cv.inference_cross_lingual(str(text), str(ref_path), stream=False):
                 sf.write(str(out_dir / f"n{seg_id:03d}.wav"),

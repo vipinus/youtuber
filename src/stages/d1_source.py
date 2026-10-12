@@ -174,6 +174,12 @@ _MEETING_FORMAT = (
     "hearing", "webinar", "media availability", "roundtable", "fireside", "panel",
     "q&a", "ama", "town-hall", "all-hands", "town hall meeting", "presser",
     "state of nasa", "advisory council", "committee meeting", "public meeting",
+    # 采访/对谈形式(用户定 2026-07-09,再确认 2026-07-14:不要会议/发布会/采访等)——
+    # 同属松散讲话非叙事片
+    "interview", "采访", "in conversation", "conversation with", "sit-down",
+    "one-on-one", "fireside chat", "ask the", "office hours",
+    "发布会", "记者会", "座谈", "对谈", "listening session", "testimony",
+    "press briefing", "media roundtable",
 )
 
 
@@ -211,8 +217,12 @@ def _set_ytdlp_extra(cfg) -> None:
     global _YTDLP_EXTRA
     extra: list[str] = []
     b = cfg.get("p7.ytdlp_cookies_browser", "")
+    cf = cfg.get("p7.ytdlp_cookies_file", "")
     if b:
         extra += ["--cookies-from-browser", str(b)]
+    elif cf:
+        # 无浏览器的无头机(如 pluto,2026-07-11):用导出的 Netscape cookie 文件
+        extra += ["--cookies", str(Path(str(cf)).expanduser())]
     # YouTube n-challenge(2026-07-08):需 deno + EJS 解算器才能拿到视频流,否则只有
     # 图片。ejs:github 拉远程解算脚本(zion 已装 deno)。留空关闭。
     rc = cfg.get("p7.ytdlp_remote_components", "ejs:github")
@@ -252,20 +262,21 @@ def _yt_fetch_entry(ytdlp: str, video_id: str) -> dict:
             "live_status": d.get("live_status")}
 
 
-def _yt_video_stats(ytdlp: str, video_id: str) -> tuple[int, int]:
-    """单条视频 (播放量, 点赞数)。频道扁平列表两者恒为空(实测 2026-07-03),
-    只能逐条 --print,不下载。任一取不到记 0。"""
+def _yt_video_stats(ytdlp: str, video_id: str) -> tuple[int, int, int]:
+    """单条视频 (播放量, 点赞数, 上传时间戳epoch)。频道扁平列表这些恒为空(实测
+    2026-07-03),只能逐条 --print,不下载。任一取不到记 0(时间戳 0=未知,排近期时垫底)。"""
     import subprocess
     try:
         out = subprocess.run(
-            [ytdlp, *_YTDLP_EXTRA, "-s", "--print", "%(view_count)s|%(like_count)s", "--no-playlist",
-             f"https://www.youtube.com/watch?v={video_id}"],
+            [ytdlp, *_YTDLP_EXTRA, "-s", "--print", "%(view_count)s|%(like_count)s|%(timestamp)s",
+             "--no-playlist", f"https://www.youtube.com/watch?v={video_id}"],
             capture_output=True, text=True, timeout=60, check=True)
-        v, _, l = out.stdout.strip().splitlines()[-1].partition("|")
-        toint = lambda x: int(x) if x.strip().isdigit() else 0  # noqa: E731
-        return toint(v), toint(l)
+        parts = out.stdout.strip().splitlines()[-1].split("|")
+        toint = lambda x: int(x) if x.strip().lstrip("-").isdigit() else 0  # noqa: E731
+        return toint(parts[0]), toint(parts[1] if len(parts) > 1 else ""), \
+            toint(parts[2] if len(parts) > 2 else "")
     except Exception:
-        return 0, 0
+        return 0, 0, 0
 
 
 def _yt_download(ytdlp: str, video_id: str, dest: Path, min_height: int, max_bytes: int) -> None:
@@ -350,6 +361,13 @@ def _run_youtube_gov(ctx: Ctx) -> None:
         except Exception as e:
             ctx.warn(f"d1_source: 频道 {channel} 列表失败({type(e).__name__})，跳过")
 
+    # 题材硬排除(p7.avoid_keywords,用户定 2026-07-10):标题含排除词的整片剔除,不进候选
+    # (如自然线已连发多部鱼片→avoid:[salmon,fish]换哺乳类)。留空不启用;与 prefer_keywords 互补。
+    avoid = [str(k).lower() for k in (cfg.get("p7.avoid_keywords", []) or [])]
+    # 题材硬要求(p7.require_keywords,用户定 2026-07-10):标题必须含至少一个要求词,否则剔除
+    # (定向要某一类如"鸟类"时用;prefer 只软排序,require 是硬门)。留空不启用。
+    require = [str(k).lower() for k in (cfg.get("p7.require_keywords", []) or [])]
+
     survivors: list[tuple[dict, str]] = []
     for e, channel in pool:
         vid = e.get("id")
@@ -364,15 +382,34 @@ def _run_youtube_gov(ctx: Ctx) -> None:
             continue
         if _is_blocked(title, "", "") or not _looks_narrated(title, ""):
             continue
+        # 会议/发布会/采访硬排除(用户定 2026-07-09,p7.exclude_meeting=true 时启用):
+        # 默认仍是降权(排序压后),开关打开则整类剔除,不进候选。
+        if cfg.get("p7.exclude_meeting", False) and _is_meeting_format(title):
+            continue
+        if avoid and any(k in title.lower() for k in avoid):
+            continue
+        if require and not any(k in title.lower() for k in require):
+            continue
         dur = float(e.get("duration") or 0)
         if not (min_sec <= dur <= max_sec):
             continue
         survivors.append((e, channel))
     for e, _ in survivors:
-        if not e.get("view_count") or e.get("like_count") is None:
-            v, l = _yt_video_stats(ytdlp, e["id"])
+        if not e.get("view_count") or e.get("like_count") is None or not e.get("timestamp"):
+            v, l, ts = _yt_video_stats(ytdlp, e["id"])
             e["view_count"] = e.get("view_count") or v
             e["like_count"] = e.get("like_count") if e.get("like_count") is not None else l
+            e["timestamp"] = e.get("timestamp") or ts
+    # 近期时间窗(p7.max_age_days,用户定 2026-07-14):只留上传在 N 天内的片。配合
+    # sort_by=views 即"近期热点"(近期窗内最高播放);0/未配则不限时。timestamp 未知(0)一律剔除。
+    max_age_days = int(cfg.get("p7.max_age_days", 0) or 0)
+    if max_age_days > 0:
+        import time
+        cutoff = time.time() - max_age_days * 86400
+        kept = [(e, ch) for e, ch in survivors if (e.get("timestamp") or 0) >= cutoff]
+        ctx.warn(f"d1_source: 近期窗 {max_age_days} 天 → {len(kept)}/{len(survivors)} 片入选")
+        survivors = kept
+
     # 题材偏好(p7.prefer_keywords,用户定 2026-07-09):标题含偏好词的整体排最前
     # (自然线设动物词→优先动物片,不再撞 NPS 频道混入的历史/文化片)。留空不启用。
     prefer = [str(k).lower() for k in (cfg.get("p7.prefer_keywords", []) or [])]
@@ -384,9 +421,21 @@ def _run_youtube_gov(ctx: Ctx) -> None:
     # 会议/发布会形式降权(用户定 2026-07-08):非会议片整体排在会议片前面,组内再
     # 按点赞——即 town hall 这类哪怕点赞高也排到所有纪录片之后,不排除只压后。
     # 排序优先级:题材偏好命中 > 非会议 > 点赞 > 播放量(都降序)。
+    # p7.sort_by(用户定 2026-07-10/14):"views"=播放量优先;"recent"=上传时间优先(近期热点,
+    # 按 timestamp 降序,新片在前,同时点赞次之);默认(空)=点赞优先。
+    _sort = str(cfg.get("p7.sort_by", "") or "").lower()
+
+    def _metric(e: dict) -> tuple:
+        v, l, ts = e.get("view_count") or 0, e.get("like_count") or 0, e.get("timestamp") or 0
+        if _sort == "recent":
+            return (ts, l)
+        if _sort == "views":
+            return (v, l)
+        return (l, v)
+
     survivors.sort(key=lambda t: (_prefer_hit(str(t[0].get("title", ""))),
                                   not _is_meeting_format(str(t[0].get("title", ""))),
-                                  t[0].get("like_count") or 0, t[0].get("view_count") or 0),
+                                  *_metric(t[0])),
                    reverse=True)
 
     # 定点指定(p7.yt_pin_ids):人工点名的视频强制排队首(如系列片续集),仍过

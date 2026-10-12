@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Callable
 
@@ -15,10 +16,12 @@ from src.stages import (
     d4_tts,
     d5_subs,
     d7_assemble,
+    d7b_bookend,
     d8_meta,
     d9b_bilibili,
     d9c_publish_en,
     d9d_crosslink,
+    d11_shorts,
     d10_archive,
     s1_topic,
     s2_research,
@@ -66,6 +69,9 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d4_tts", d4_tts.run, d4_tts.OUTPUT),
     ("d5_subs", d5_subs.run, d5_subs.OUTPUT),
     ("d7_assemble", d7_assemble.run, d7_assemble.OUTPUT),
+    # 阶段⑦b(2026-07-12):中文成片加品牌片头+片尾CTA(订阅/点赞/提醒)。best-effort,
+    # 只改 video.mp4(中文版),英文版发 source.mp4 不受影响;默认 p7.bookend.enabled=false。
+    ("d7b_bookend", d7b_bookend.run, d7b_bookend.OUTPUT),
     ("d8_meta", d8_meta.run, d8_meta.OUTPUT),
     # 用户定(2026-07-06):英文原版先发,中文配音版后发。d9c(best-effort,英文)
     # 在前;d9_publish(主发布,中文)在后。互链 d9d 独立最后一步,顺序无关。
@@ -73,6 +79,9 @@ STAGES_P7: list[tuple[str, Callable[[Ctx], None], str]] = [
     ("d9_publish", s9_publish.run, s9_publish.OUTPUT),
     ("d9b_bilibili", d9b_bilibili.run, d9b_bilibili.OUTPUT),
     ("d9d_crosslink", d9d_crosslink.run, d9d_crosslink.OUTPUT),
+    # 阶段⑪(2026-07-11):从长片切竖屏高光 Shorts 引流涨订阅。best-effort,放 d10 前
+    # 好让 d10 把 shorts/ 一并归档;默认 p7.shorts.enabled=false,不影响既有链。
+    ("d11_shorts", d11_shorts.run, d11_shorts.OUTPUT),
     ("d10_archive", d10_archive.run, d10_archive.OUTPUT),
 ]
 
@@ -133,6 +142,11 @@ def main(argv: list[str] | None = None) -> None:
     args = ap.parse_args(argv)
 
     config = load_config(args.config)
+    # 多机共享注册表(用户定 2026-07-12):config 指定 NAS 上的 published.json,
+    # 启动时导出为 env 供 src.util.registry 读取,让 zion/pluto dedup 共用一份。
+    reg = config.get("paths.registry", "")
+    if reg:
+        os.environ["YOUTUBER_REGISTRY"] = str(Path(reg).expanduser())
     root = Path(config.get("paths.jobs_root", "jobs"))
     llm = get_llm(config)
     run_pipeline(args.case, config, root, llm, args.frm, args.to, args.force,
