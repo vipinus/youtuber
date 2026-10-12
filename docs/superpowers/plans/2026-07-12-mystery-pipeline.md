@@ -21,7 +21,7 @@
 - zion GPU 脚本必须经 LD_LIBRARY_PATH wrapper 调用（`~/gpu-py` 一类），绝不直接跑裸 venv python。
 - 纯函数（命令拼装、切分、解析）零 torch/网络依赖，可离线单测；真网络/GPU 函数测试必打桩。
 - `assets/voice_ref/` 是克隆真人音色样本，**不进 git**（.gitignore），同 secrets 手动 scp 到 zion。
-- 测试跑法：`cd /home/ddxs/Sync/Works/youtuber && .venv/bin/python -m pytest tests/<file> -v`（下文简写 `pytest`）。
+- 测试跑法：`cd /home/ddxs/Projects/youtuber && .venv/bin/python -m pytest tests/<file> -v`（下文简写 `pytest`）。
 - 提交信息末尾带 `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`。
 
 ## 产物契约总览（阶段间接口）
